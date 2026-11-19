@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EstreamAssistant.App/EstreamAssistant.App.csproj" />
+    <Project Path="src/EstreamAssistant.Core/EstreamAssistant.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EstreamAssistant.Tests/EstreamAssistant.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,13 @@
+bin/
+obj/
+publish/
+*.user
+.vs/
+TestResults/
+# Store data exported from the store PC - keep private (Plan.txt sec. 12)
+sample-items.txt
+*.sample.txt
+
+# Original plan from the store PC: describes the store setup, keep private
+Plan.txt
+dist/
