@@ -35,13 +35,13 @@ public sealed class MockItemRepository : IItemRepository
     public async Task<Item?> GetByBarcodeAsync(long upc, CancellationToken ct = default)
     {
         await Task.Delay(Delay, ct).ConfigureAwait(false);
-        return _items.GetValueOrDefault(upc);
+        lock (_items) return _items.GetValueOrDefault(upc);
     }
 
     public async Task<IReadOnlyList<ItemName>> GetAllNamesAsync(CancellationToken ct = default)
     {
         await Task.Delay(Delay, ct).ConfigureAwait(false);
-        return _items.Values.Select(i => new ItemName(i.Upc, i.Description, i.Sold, i.Inactive)).ToList();
+        lock (_items) return _items.Values.Select(i => new ItemName(i.Upc, i.Description, i.Sold, i.Inactive)).ToList();
     }
 
     public async Task<CodeTables> GetCodesAsync(CancellationToken ct = default)
@@ -50,8 +50,19 @@ public sealed class MockItemRepository : IItemRepository
         return _codes;
     }
 
-    public Task<int> GetActiveCountAsync(CancellationToken ct = default) =>
-        Task.FromResult(_items.Values.Count(i => !i.Inactive));
+    public Task<int> GetActiveCountAsync(CancellationToken ct = default)
+    {
+        lock (_items) return Task.FromResult(_items.Values.Count(i => !i.Inactive));
+    }
+
+    /// <summary>
+    /// MOCK ONLY: the simulated engine "saves" into the sample data so lookups after a mock
+    /// SAVE show the new values. The real eStream database is never written by this app (S1).
+    /// </summary>
+    public void SimulateEngineSave(Item updated)
+    {
+        lock (_items) _items[updated.Upc] = updated;
+    }
 
     public Task<bool> PingAsync(CancellationToken ct = default) => Task.FromResult(true);
 

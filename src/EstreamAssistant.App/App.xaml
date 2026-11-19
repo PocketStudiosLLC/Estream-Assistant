@@ -42,6 +42,39 @@
             <Setter Property="Background" Value="{StaticResource WindowBg}" />
         </Style>
 
+        <!-- Dark check box: a filled accent box with a tick when checked. -->
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource Text}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Border x:Name="Box" Width="18" Height="18" CornerRadius="4" BorderThickness="1.5" VerticalAlignment="Center"
+                                    BorderBrush="{StaticResource Border}" Background="{StaticResource InputBg}">
+                                <Path x:Name="Tick" Data="M 3.5,9 L 7.5,13 L 14.5,5" Stroke="White" StrokeThickness="2.2" Visibility="Collapsed"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                            </Border>
+                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="{StaticResource Accent}" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentText}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ToolTip">
             <Setter Property="FontFamily" Value="{StaticResource AppFont}" />
             <Setter Property="FontSize" Value="14" />
@@ -258,7 +291,7 @@
                     <ControlTemplate TargetType="TabItem">
                         <Border x:Name="Bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,3,0,0"
                                 Padding="18,8" Margin="0,0,2,0">
-                            <ContentPresenter ContentSource="Header" />
+                            <ContentPresenter x:Name="Hd" ContentSource="Header" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -268,7 +301,8 @@
                                 <Setter TargetName="Bd" Property="Background" Value="{StaticResource CardBg}" />
                                 <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentText}" />
                                 <Setter Property="Foreground" Value="{StaticResource Text}" />
-                                <Setter Property="FontWeight" Value="SemiBold" />
+                                <!-- On the header only: set on the TabItem it would make the whole page bold. -->
+                                <Setter TargetName="Hd" Property="TextElement.FontWeight" Value="SemiBold" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.Text.RegularExpressions;
 using EstreamAssistant.App.Services;
+using EstreamAssistant.Core.Changes;
 using EstreamAssistant.Core.Claude;
 using EstreamAssistant.Core.Data;
 using EstreamAssistant.Core.Logging;
@@ -28,8 +29,17 @@ public sealed partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _chatCts;
 
     public MainViewModel(ItemLookupService lookup, AppSettings settings, ISecretStore secrets, AppLog log,
-        EStreamMonitor monitor, SettingsViewModel settingsVm, IChatService chat, UsageTracker usage)
+        EStreamMonitor monitor, SettingsViewModel settingsVm, IChatService chat, UsageTracker usage, PendingChanges pending)
     {
+        _pending = pending;
+        pending.Changed += (_, _) => OnUi(RefreshPending);
+        pending.WorkStarted += (_, w) => OnUi(() => StartWorking(w));
+        pending.WorkFinished += (_, _) => OnUi(StopWorking);
+        pending.DryRunBlocker = () =>
+            pending.Executor.DrivesEStream && EStreamStatus == StatusLevel.Bad
+                ? "eStream Office isn't open. Open it, then try again."
+                : null;
+        _workTimer.Tick += (_, _) => UpdateWorkingElapsed();
         _lookup = lookup;
         _settings = settings;
         _secrets = secrets;
@@ -43,6 +53,223 @@ public sealed partial class MainViewModel : ObservableObject
         usage.Changed += (_, _) => System.Windows.Application.Current?.Dispatcher.BeginInvoke(UpdateUsageText);
         UpdateClaudeStatus();
         UpdateUsageText();
+    }
+
+    // ------------------------------------------------------- pending changes
+
+    private readonly PendingChanges _pending;
+
+    public ObservableCollection<PendingRowViewModel> PendingRows { get; } = [];
+    public bool HasPending => PendingRows.Count > 0;
+    public bool CanSave => _pending.CanSave;
+    public string ExecutorName => _pending.Executor.Name;
+    public bool ExecutorDrivesEStream => _pending.Executor.DrivesEStream;
+
+    /// <summary>Set by the window: shows a Yes/No dialog (title, text) and returns true for Yes.</summary>
+    public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DryRunCommand), nameof(ClearPendingCommand))]
+    private bool _isWorking;
+
+    [ObservableProperty] private string _workingText = "";
+    [ObservableProperty] private string _dryRunSummary = "";
+    [ObservableProperty] private StatusLevel _dryRunLevel;
+    [ObservableProperty] private ItemEditViewModel? _edit;
+
+    private static void OnUi(Action a)
+    {
+        var d = System.Windows.Application.Current?.Dispatcher;
+        if (d is null || d.CheckAccess()) a(); else d.BeginInvoke(a);
+    }
+
+    private void RefreshPending()
+    {
+        PendingRows.Clear();
+        foreach (var r in _pending.Rows) PendingRows.Add(new PendingRowViewModel(r));
+        OnPropertyChanged(nameof(HasPending));
+        OnPropertyChanged(nameof(CanSave));
+        OnPropertyChanged(nameof(SaveToolTip));
+        DryRunCommand.NotifyCanExecuteChanged();
+        SaveCommand.NotifyCanExecuteChanged();
+        ClearPendingCommand.NotifyCanExecuteChanged();
+        var last = _pending.LastDryRun;
+        if (last is null || PendingRows.Count == 0) { DryRunSummary = ""; return; }
+        if (last.Version == _pending.Version)
+        {
+            DryRunSummary = last.Summary + (last.Passed ? " Ready to save." : "");
+            DryRunLevel = last.Passed ? StatusLevel.Ok : StatusLevel.Bad;
+        }
+        else
+        {
+            DryRunSummary = "The list changed, so it needs a new dry run.";
+            DryRunLevel = StatusLevel.Warn;
+        }
+    }
+
+    private bool CanDryRun() => HasPending && !IsWorking;
+
+    [RelayCommand(CanExecute = nameof(CanDryRun))]
+    private async Task DryRun()
+    {
+        var r = await Task.Run(() => _pending.DryRunAsync());
+        Add(r.Passed ? FeedKind.App : FeedKind.Error, r.Summary + (r.Passed ? " Check the list, then press SAVE." : ""));
+        _chat.AddContextNote($"[dry run by the owner] {r.Summary}");
+        RefreshPending();
+    }
+
+    /// <summary>Set by the window: the U7 dialog listing every change. True = "Save N changes".</summary>
+    public Func<IReadOnlyList<ChangeRow>, bool> ConfirmSave { get; set; } = _ => false;
+
+    /// <summary>Raised after a save, so the History tab reloads.</summary>
+    public event EventHandler? RunFinished;
+
+    public string SaveToolTip => _pending.SaveBlockedReason ?? $"Save {_pending.RowsToSave.Count} change(s) to eStream (asks first)";
+
+    [RelayCommand(CanExecute = nameof(CanSave))]
+    private async Task Save()
+    {
+        // S3: only this button saves, and only after the owner confirms the list (U7).
+        var hash = _pending.LastDryRun?.Hash;
+        var rows = _pending.RowsToSave;
+        if (hash is null || rows.Count == 0) return;
+        if (!ConfirmSave(rows))
+        {
+            Add(FeedKind.App, "Save cancelled. Nothing was changed.");
+            return;
+        }
+        var r = await Task.Run(() => _pending.SaveAsync(hash));
+        Add(r.Ok ? FeedKind.App : FeedKind.Error, r.Summary + (r.Unverified > 0 ? " Check the Unverified rows in eStream." : ""));
+        _chat.AddContextNote($"[saved by the owner] {r.Summary}");
+        RefreshPending();
+        // The item card may show old values now.
+        if (CurrentItem is not null && rows.Any(x => x.Upc == CurrentItem.Upc))
+            await LookupUpcAsync(CurrentItem.UpcText, fromScan: false);
+        RunFinished?.Invoke(this, EventArgs.Empty);
+    }
+
+    // Working overlay (S8 / U8): elapsed time and the expected duration.
+    private readonly System.Windows.Threading.DispatcherTimer _workTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private DateTime _workStarted;
+    private string _workBase = "";
+    [ObservableProperty] private string _workingDetail = "";
+
+    private void StartWorking(PendingChanges.WorkInfo w)
+    {
+        var what = w.IsSave ? "Saving" : "Dry run";
+        _workBase = _pending.Executor.DrivesEStream
+            ? $"{what} in eStream: please don't touch the mouse or keyboard."
+            : $"{what} (simulated, eStream is not touched)…";
+        WorkingText = _workBase;
+        _workStarted = DateTime.Now;
+        UpdateWorkingElapsed(w.Rows);
+        IsWorking = true;
+        _workTimer.Start();
+    }
+
+    private int _workRows;
+    private void UpdateWorkingElapsed(int? rows = null)
+    {
+        if (rows is not null) _workRows = rows.Value;
+        var e = DateTime.Now - _workStarted;
+        if (_workRows == 0) { WorkingDetail = $"elapsed {(int)e.TotalMinutes}:{e.Seconds:00}"; return; }
+        WorkingDetail = $"{_workRows} item{(_workRows == 1 ? "" : "s")} · elapsed {(int)e.TotalMinutes}:{e.Seconds:00}" +
+            (_pending.Executor.DrivesEStream ? $" · usually {_workRows * 10}–{_workRows * 20 + 10} s" : "");
+    }
+
+    /// <summary>The overlay for other engine work (stock sheets). Safe from any thread.</summary>
+    public void ShowWorking(string what, bool drivesEStream) => OnUi(() =>
+    {
+        _workBase = drivesEStream ? $"{what} in eStream: please don't touch the mouse or keyboard." : $"{what} (simulated, eStream is not touched)…";
+        WorkingText = _workBase;
+        _workStarted = DateTime.Now;
+        _workRows = 0;
+        WorkingDetail = "elapsed 0:00";
+        IsWorking = true;
+        _workTimer.Start();
+    });
+
+    public void HideWorking() => OnUi(StopWorking);
+
+    private void StopWorking()
+    {
+        _workTimer.Stop();
+        IsWorking = false;
+        RunFinished?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>At startup, after a save that never finished (spec 10). Nothing is re-applied.</summary>
+    public void ReportInterruptedSave(InterruptedSave s)
+    {
+        Add(FeedKind.Error, $"The save started at {s.Started:MMM d h:mm tt} ({s.Rows} items) didn't finish: the app was closed or crashed. " +
+            "Some of those items may have been saved. Check them in eStream and in History. Nothing will be re-applied automatically.");
+    }
+
+    private bool CanClearPending() => HasPending && !IsWorking;
+
+    [RelayCommand(CanExecute = nameof(CanClearPending))]
+    private void ClearPending()
+    {
+        if (!Confirm("Clear pending changes", $"Remove all {PendingRows.Count} rows from the list? Nothing in eStream changes.")) return;
+        _pending.Clear();
+    }
+
+    [RelayCommand]
+    private void RemovePending(PendingRowViewModel? row)
+    {
+        if (row is not null && !IsWorking) _pending.Remove(row.Upc);
+    }
+
+    [RelayCommand]
+    private async Task AllowLargeChange(PendingRowViewModel? row)
+    {
+        if (row is null || IsWorking) return;
+        if (!Confirm("Allow large change",
+                $"{row.Description} (UPC {row.UpcText})\n\n{row.ChangesText}\n\n{row.Message}\n\nIs this change really right? Choose Yes only if you've checked it."))
+            return;
+        await _pending.AllowLargeChangeAsync(row.Upc);
+        Add(FeedKind.App, $"Large change allowed for {row.Description}. It needs a dry run.");
+    }
+
+    [RelayCommand]
+    private void StartEdit()
+    {
+        if (CurrentItem is null) return;
+        Edit = CurrentItem.Item.Inactive ? null : new ItemEditViewModel(CurrentItem.Item, _settings);
+        if (Edit is null) Add(FeedKind.App, "This item is inactive, so it can't be changed.");
+    }
+
+    [RelayCommand]
+    private void CancelEdit() => Edit = null;
+
+    [RelayCommand]
+    private void PriceFromCost() => Edit?.PriceFromCost();
+
+    [RelayCommand]
+    private async Task StageEdit()
+    {
+        if (Edit is null) return;
+        var (req, error) = Edit.ToRequest();
+        if (req is null) { Edit.Message = error ?? ""; return; }
+        var outcome = (await _pending.StageAsync([req]))[0];
+        if (outcome.Staged)
+        {
+            Add(FeedKind.App, $"Added to pending changes: {outcome.Description}\n{outcome.ChangesText}");
+            _chat.AddContextNote($"[owner staged on the item card] {outcome.Description}: {outcome.ChangesText}");
+            Edit = null;
+        }
+        else
+        {
+            Edit.Message = outcome.Message;
+            if (_pending.Rows.Any(r => r.Upc == Edit.Item.Upc)) Add(FeedKind.App, $"{outcome.Description}: {outcome.Message}");
+        }
+    }
+
+    partial void OnEditChanged(ItemEditViewModel? value) => OnPropertyChanged(nameof(HasScanList));
+
+    partial void OnCurrentItemChanged(ItemCardViewModel? value)
+    {
+        if (Edit is not null && Edit.Item.Upc != value?.Upc) Edit = null;
     }
 
     /// <summary>Raised when the chat box should get focus (after Claude asks a question).</summary>
@@ -62,6 +289,8 @@ public sealed partial class MainViewModel : ObservableObject
     public string ChatPlaceholder => IsChatBusy ? "Claude is working… (Esc or Stop to cancel)" : "Ask Claude, e.g. \"what's the price of lays cucumber?\"";
 
     public SettingsViewModel Settings { get; }
+    public HistoryViewModel? History { get; init; }
+    public CountsViewModel? Counts { get; init; }
 
     /// <summary>Raised when the scan box should get focus back (after a lookup, a choice, ...).</summary>
     public event EventHandler? FocusScanBoxRequested;
@@ -82,7 +311,8 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _cacheStatusText = "";
 
     public string DataSourceName => _lookup.Repository.SourceName;
-    public bool HasScanList => ScanList.Count > 0;
+    /// <summary>Hidden while the item card's change form is open, to leave room for the pending list.</summary>
+    public bool HasScanList => ScanList.Count > 0 && Edit is null;
 
     public async Task InitializeAsync()
     {

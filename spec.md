@@ -212,6 +212,7 @@ ScannerInput  ClaudeService ──tools──► ToolRouter ──► ChangeList
 - **F6.3** **Stage 1, create sheet:** an in-app confirm (it uses up a sheet number), then `New-EsStockSheet.ps1 -Path <csv> [-Comment]`. The app records the sheet number. Imports **accumulate**, so the app blocks importing the same counts into the same sheet twice.
 - **F6.4** **Stage 2, POST:** only from a human button on the Stock counts tab. It runs `Publish-EsStockSheet.ps1 -SheetId N -DryRun` first, shows the summary, then asks the owner to **type the sheet number** to confirm, then runs without `-DryRun`. Sheets on the S6 protected list cannot be selected.
 - **F6.5** The first real POST is marked in the UI as a supervised first-time action (see §15).
+- **F6.6** (as built) Only sheets this app made can be posted, each once. The app keeps its own sheet register (`stock-sheets.json`; mock TEST sheets in a separate file). If the script output doesn't include the new sheet number, the owner types it from eStream; a protected or already-listed number is refused.
 
 ### 6.7 History
 - **F7.1** Lists past runs from `Done\<file>_<time>[_DRYRUN]_results.csv`, newest first, filterable by date, UPC, text and status.
@@ -259,8 +260,8 @@ All tools use JSON Schema with `strict: true` and `additionalProperties: false`.
 | `calc_price` | `cost: number`, `mode: "markup"\|"margin"`, `pct: number`, `ending?: string` | `{price, gm_pct, raw_price}` | None (runs in C#) |
 | `stage_changes` | `rows: [{upc, price?, for?, case_cost?, deposit?, levy?, on_hand?, min?, max?, force?, reason}]` | Per-row `{staged \| skipped, message}` | Adds or updates grid rows and clears the dry-run state. `force` is ignored unless the owner confirmed it in the UI |
 | `run_dry_run` | — | Per-row `{status, message}` | Runs the executor dry run on the current grid (shows the overlay) |
-| `stock_count_preview` | `rows: [{upc, count}]` | Over/short per row | None |
-| `create_stock_sheet` | `rows: [{upc, count}]`, `comment: string` | `{sheet_id}` or `cancelled` | **Blocks on an in-app confirm dialog** |
+| `stock_count_preview` | `rows: [{upc, count}]`, `add_to_list: bool` | Over/short per row | With `add_to_list`, the counts go into the count list on the Stock counts tab |
+| `create_stock_sheet` | `comment: string` | `{sheet, message}` or cancelled | Uses the **count list** (what the owner sees), not rows from Claude. **Blocks on an in-app confirm dialog** |
 
 **Not available as tools, ever:** apply/save, post stock sheet, any SQL write, running arbitrary scripts or shell commands.
 
@@ -323,7 +324,9 @@ Ignore the old wrappers (`*.old`, `*.bak`, `Set-EsPrice.ps1`, `Invoke-EsPriceCsv
 - The app has a **"Open PAD flow"** button in Settings for manual use.
 
 ### 8.4 File formats
-- **Changes CSV** (`TEMPLATE-changes.csv`): `UPC,Price,For,CaseCost,Deposit,Levy,OnHand,Min,Max,Force`. Empty cell = no change. Written by the app to `Inbox\assistant_<yyyyMMdd-HHmmss>.csv`, UTF-8, CRLF line endings.
+- **Changes CSV** (`TEMPLATE-changes.csv`): `UPC,Price,For,CaseCost,Deposit,Levy,OnHand,Min,Max,Force`. Empty cell = no change. UTF-8 (no BOM), CRLF line endings, named `assistant_<yyyyMMdd-HHmmss>.csv`.
+  - **Dry runs** write it to the app's own `%LOCALAPPDATA%\eStreamAssistant\runs\` and pass it with `-Path`, **never to `Inbox\`**. A CSV left in `Inbox\` would be applied by anyone choosing APPLY in the PAD flow, which would bypass SAVE (S2/S3).
+  - **Apply** (SAVE, Phase 4) writes the same CSV content (hash checked) to `Inbox\` and runs it, and the script moves it to `Done\`.
 - **Counts CSV** (`TEMPLATE-counts.csv`): `UPC,Count`.
 - **Results CSV:** `UPC, Description, Changes, Status, Message`. Status values include DryRun, Done/Applied, Skipped (with reason), Failed, Unverified. **Read the exact strings from `Invoke-EsCsv.ps1` and the sample files in `Done\` before writing the parser.** Unknown statuses are shown as-is and treated as *not successful*.
 - The stock-sheet import file (`C:\ProgramData\estream\Import\CMStock<sheetID>.dat`) is written **only by the scripts**, never by the app.

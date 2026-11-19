@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using EstreamAssistant.Core.Changes;
 using EstreamAssistant.Core.Data;
 using EstreamAssistant.Core.Models;
 using EstreamAssistant.Core.Pricing;
@@ -25,12 +26,16 @@ public sealed class ToolExecutor
 {
     private readonly ItemLookupService _lookup;
     private readonly AppSettings _settings;
+    private readonly PendingChanges? _pending;
+    private readonly Counts.StockCounts? _counts;
     private CodeTables? _codes;
 
-    public ToolExecutor(ItemLookupService lookup, AppSettings settings)
+    public ToolExecutor(ItemLookupService lookup, AppSettings settings, PendingChanges? pending = null, Counts.StockCounts? counts = null)
     {
         _lookup = lookup;
         _settings = settings;
+        _pending = pending;
+        _counts = counts;
     }
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -45,6 +50,10 @@ public sealed class ToolExecutor
                 ChatTools.FindItems => await FindItemsAsync(input, ct).ConfigureAwait(false),
                 ChatTools.GetCodes => await GetCodesAsync(ct).ConfigureAwait(false),
                 ChatTools.CalcPrice => CalcPrice(input),
+                ChatTools.StageChanges => await StageChangesAsync(input, ct).ConfigureAwait(false),
+                ChatTools.RunDryRun => await RunDryRunAsync(ct).ConfigureAwait(false),
+                ChatTools.StockCountPreview => await StockCountPreviewAsync(input, ct).ConfigureAwait(false),
+                ChatTools.CreateStockSheet => await CreateStockSheetAsync(input, ct).ConfigureAwait(false),
                 _ => ToolOutcome.Error($"Unknown tool '{name}'. Only {string.Join(", ", ChatTools.All.Select(t => t.Name))} exist."),
             };
         }
@@ -168,6 +177,135 @@ public sealed class ToolExecutor
             store_endings = _settings.PriceEndings,
         }, Json), false);
     }
+
+    private async Task<ToolOutcome> StageChangesAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_pending is null) throw new ToolInputException("Pending changes aren't available.");
+        var rows = Get(input, "rows");
+        if (rows.ValueKind != JsonValueKind.Array) throw new ToolInputException("'rows' must be a list.");
+        if (rows.GetArrayLength() is 0 or > PendingChanges.MaxRows) throw new ToolInputException($"Send 1 to {PendingChanges.MaxRows} rows.");
+
+        var requests = new List<ChangeRequest>();
+        foreach (var r in rows.EnumerateArray())
+        {
+            if (r.ValueKind != JsonValueKind.Object) throw new ToolInputException("Each row must be an object.");
+            var d = r.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+            var upc = GetString(d, "upc", 40);
+            if (!UpcNormalizer.LooksLikeUpc(upc)) throw new ToolInputException($"'{upc}' isn't a UPC.");
+            requests.Add(new ChangeRequest
+            {
+                Upc = upc,
+                Price = NullableDecimal(d, "price"),
+                For = NullableDecimal(d, "for"),
+                CaseCost = NullableDecimal(d, "case_cost"),
+                Deposit = NullableInt(d, "deposit"),
+                Levy = NullableInt(d, "levy"),
+                OnHand = NullableDecimal(d, "on_hand"),
+                Min = NullableDecimal(d, "min"),
+                Max = NullableDecimal(d, "max"),
+                Reason = d.TryGetValue("reason", out var reason) && reason.ValueKind == JsonValueKind.String ? Clip(reason.GetString() ?? "", 200) : "",
+            });
+        }
+
+        var outcomes = await _pending.StageAsync(requests, ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            rows = outcomes.Select(o => new
+            {
+                upc = o.Upc,
+                description = o.Description,
+                result = o.Staged ? "staged" : "skipped",
+                changes = o.ChangesText,
+                message = o.Message,
+            }),
+            next = "Tell the owner what is in the list (Now -> New). A dry run is needed before the owner can press SAVE.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> RunDryRunAsync(CancellationToken ct)
+    {
+        if (_pending is null) throw new ToolInputException("Pending changes aren't available.");
+        var record = await _pending.DryRunAsync(ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            passed = record.Passed,
+            summary = record.Summary,
+            rows = _pending.Rows.Select(r => new
+            {
+                upc = r.Upc.ToString(CultureInfo.InvariantCulture),
+                description = r.Description,
+                status = r.Status.ToString(),
+                changes = r.ChangesText,
+                message = r.Message,
+            }),
+            next = record.Passed
+                ? "The owner can now check the list and press SAVE. You cannot save."
+                : "Explain in plain words what failed and what the owner can do.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> StockCountPreviewAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_counts is null) throw new ToolInputException("Stock counts aren't available.");
+        var rows = Get(input, "rows");
+        if (rows.ValueKind != JsonValueKind.Array) throw new ToolInputException("'rows' must be a list.");
+        if (rows.GetArrayLength() is 0 or > Counts.StockCounts.MaxRows) throw new ToolInputException($"Send 1 to {Counts.StockCounts.MaxRows} rows.");
+        var inputs = new List<Counts.CountInput>();
+        foreach (var r in rows.EnumerateArray())
+        {
+            if (r.ValueKind != JsonValueKind.Object) throw new ToolInputException("Each row must be an object.");
+            var d = r.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+            var upc = GetString(d, "upc", 40);
+            if (!UpcNormalizer.LooksLikeUpc(upc)) throw new ToolInputException($"'{upc}' isn't a UPC.");
+            var count = GetDecimal(d, "count");
+            if (count < 0 || count > 100_000) throw new ToolInputException($"Count {count} for {upc} isn't valid.");
+            inputs.Add(new(upc, count));
+        }
+        var add = GetBool(input, "add_to_list");
+        var outcomes = add
+            ? await _counts.AddAsync(inputs, addToExisting: false, ct).ConfigureAwait(false)
+            : await _counts.PreviewAsync(inputs, ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            rows = outcomes.Select(o => new
+            {
+                upc = o.Upc,
+                description = o.Description,
+                ok = o.Added,
+                system_on_hand = o.Row?.SystemOnHand,
+                counted = o.Row?.Count,
+                over_short = o.Row?.OverShort,
+                message = o.Message,
+            }),
+            added_to_list = add,
+            list_size = _counts.Rows.Count,
+            next = "Nothing changed in eStream. The owner can make a stock sheet from the count list; posting it is their button only.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> CreateStockSheetAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_counts is null) throw new ToolInputException("Stock counts aren't available.");
+        var comment = GetString(input, "comment", 200);
+        var run = await _counts.CreateSheetAsync(null, Clip(comment, 60), ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            ok = run.Ok,
+            sheet = run.SheetId,
+            message = run.Message,
+            next = run.Ok
+                ? "Tell the owner the sheet number. To post it (no undo) they use the Stock counts tab: post check, then type the sheet number. You cannot post."
+                : "Explain what happened in plain words.",
+        }, Json), false);
+    }
+
+    private static decimal? NullableDecimal(IReadOnlyDictionary<string, JsonElement> d, string key) =>
+        d.TryGetValue(key, out var v) && v.ValueKind != JsonValueKind.Null ? GetDecimal(d, key) : null;
+
+    private static int? NullableInt(IReadOnlyDictionary<string, JsonElement> d, string key) =>
+        d.TryGetValue(key, out var v) && v.ValueKind != JsonValueKind.Null ? GetInt(d, key) : null;
+
+    private static string Clip(string s, int max) => s.Length <= max ? s : s[..max];
 
     // --- input helpers -------------------------------------------------------
 

@@ -325,6 +325,10 @@ public sealed class ClaudeChatService : IChatService
             ChatTools.FindItems => $"Searching for \"{Arg("text")}\"…",
             ChatTools.GetCodes => "Reading deposit and levy codes…",
             ChatTools.CalcPrice => "Working out the price…",
+            ChatTools.StageChanges => "Adding to pending changes…",
+            ChatTools.RunDryRun => "Running a dry run in eStream (don't touch the mouse or keyboard)…",
+            ChatTools.StockCountPreview => "Comparing counts with eStream…",
+            ChatTools.CreateStockSheet => "Asking you to confirm a new stock sheet…",
             _ => "Working…",
         };
     }

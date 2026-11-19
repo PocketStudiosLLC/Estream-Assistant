@@ -39,6 +39,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     public IReadOnlyList<DataSourceKind> DataSources { get; } = Enum.GetValues<DataSourceKind>();
+    public IReadOnlyList<ExecutorKind> Executors { get; } = Enum.GetValues<ExecutorKind>();
+    [ObservableProperty] private ExecutorKind _executor;
     public IReadOnlyList<PricingMode> PricingModes { get; } = Enum.GetValues<PricingMode>();
     public IReadOnlyList<string> Models { get; } = ["claude-opus-5-5", "claude-sonnet-5-5"];
     public IReadOnlyList<string> Efforts { get; } = ["low", "medium", "high"];
@@ -56,6 +58,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _priceEndings = "";
     [ObservableProperty] private string _scanMaxInterKeyMs = "";
     [ObservableProperty] private string _scanListWindowSeconds = "";
+    [ObservableProperty] private string _protectedSheets = "";
 
     [ObservableProperty] private string _apiKeyDisplay = "";
     [ObservableProperty] private string _statusMessage = "";
@@ -68,6 +71,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         ConnectionString = s.ConnectionString;
         SampleDataPath = s.SampleDataPath ?? "";
         EngineFolder = s.EngineFolder;
+        Executor = s.Executor;
         Model = s.Model;
         Effort = s.Effort;
         DefaultPricingMode = s.DefaultPricingMode;
@@ -75,6 +79,19 @@ public sealed partial class SettingsViewModel : ObservableObject
         PriceEndings = string.Join(", ", s.PriceEndings.Select(e => e.ToString("00", CultureInfo.InvariantCulture)));
         ScanMaxInterKeyMs = s.ScanMaxInterKeyMs.ToString(CultureInfo.InvariantCulture);
         ScanListWindowSeconds = s.ScanListWindowSeconds.ToString(CultureInfo.InvariantCulture);
+        ProtectedSheets = string.Join(", ", s.ProtectedSheets);
+    }
+
+    private static bool TryParseNumbers(string text, out List<int> numbers)
+    {
+        numbers = [];
+        foreach (var part in text.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!int.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out var n) || n <= 0) return false;
+            numbers.Add(n);
+        }
+        numbers = numbers.Distinct().ToList();
+        return true;
     }
 
     [RelayCommand]
@@ -88,15 +105,20 @@ public sealed partial class SettingsViewModel : ObservableObject
         { StatusMessage = "Scanner key gap must be between 10 and 200 ms."; return; }
         if (!int.TryParse(ScanListWindowSeconds, out var window) || window is < 1 or > 600)
         { StatusMessage = "Scan list window must be between 1 and 600 seconds."; return; }
+        if (!TryParseNumbers(ProtectedSheets, out var protectedSheets))
+        { StatusMessage = "Protected sheets must be sheet numbers separated by commas, e.g. 10001, 10002."; return; }
 
         bool restartNeeded = _settings.DataSource != DataSource
             || _settings.ConnectionString != ConnectionString.Trim()
-            || (_settings.SampleDataPath ?? "") != SampleDataPath.Trim();
+            || (_settings.SampleDataPath ?? "") != SampleDataPath.Trim()
+            || _settings.Executor != Executor
+            || _settings.EngineFolder != EngineFolder.Trim();
 
         _settings.DataSource = DataSource;
         _settings.ConnectionString = ConnectionString.Trim();
         _settings.SampleDataPath = string.IsNullOrWhiteSpace(SampleDataPath) ? null : SampleDataPath.Trim();
         _settings.EngineFolder = EngineFolder.Trim();
+        _settings.Executor = Executor;
         _settings.Model = Model.Trim();
         _settings.Effort = Effort;
         _settings.DefaultPricingMode = DefaultPricingMode;
@@ -104,13 +126,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.PriceEndings = endings;
         _settings.ScanMaxInterKeyMs = gap;
         _settings.ScanListWindowSeconds = window;
+        _settings.ProtectedSheets = protectedSheets;
 
         try
         {
             _settings.Save(_paths.SettingsFile);
             _log.Info("Settings saved.");
             StatusMessage = restartNeeded
-                ? "Saved. Close and reopen the app to switch the data source."
+                ? "Saved. Close and reopen the app to use the new data source or engine."
                 : "Saved.";
         }
         catch (IOException ex)

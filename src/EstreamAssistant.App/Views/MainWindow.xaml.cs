@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm;
     private readonly ScanDetector _scanner;
     private readonly DispatcherTimer _eStreamTimer;
+    private const int CountsTab = 2;
 
     public MainWindow(MainViewModel vm, AppSettings settings)
     {
@@ -35,6 +36,26 @@ public partial class MainWindow : Window
         PreviewKeyDown += OnPreviewKeyDown;
 
         vm.FocusScanBoxRequested += (_, _) => FocusScanBoxWhenIdle();
+        vm.ConfirmSave = rows => new ConfirmSaveWindow(rows, vm.ExecutorDrivesEStream) { Owner = this }.ShowDialog() == true;
+        vm.RunFinished += async (_, _) => { if (vm.History is not null) await vm.History.Refresh(); };
+        Tabs.SelectionChanged += async (_, e) =>
+        {
+            if (e.Source == Tabs && Tabs.SelectedIndex == 1 && vm.History is not null) await vm.History.Refresh();
+        };
+        if (vm.Counts is { } counts)
+        {
+            counts.ConfirmAction = (title, intro, lines, ok, mustType) => ConfirmActionWindow.Ask(this, title, intro, lines, ok, mustType);
+            counts.AskNumber = (title, intro) =>
+                int.TryParse(ConfirmActionWindow.Ask(this, title, intro, [], "OK", ConfirmActionWindow.AnyNumber), out var n) ? n : null;
+            counts.PickCsvFile = () =>
+            {
+                var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "Counts CSV (*.csv;*.txt)|*.csv;*.txt|All files|*.*", Title = "Import counts (UPC,Count)" };
+                return dlg.ShowDialog(this) == true ? dlg.FileName : null;
+            };
+            counts.FocusCountRequested += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Input, () => { CountBox.Focus(); CountBox.SelectAll(); });
+        }
+        vm.Confirm = (title, text) =>
+            MessageBox.Show(this, text, title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
         vm.Feed.CollectionChanged += OnFeedChanged;
         vm.ChatStreamed += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Background, FeedScroll.ScrollToEnd);
         vm.FocusChatBoxRequested += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
@@ -53,12 +74,14 @@ public partial class MainWindow : Window
 
     private void OnPreviewTextInput(object sender, TextCompositionEventArgs e)
     {
+        if (_vm.IsWorking) { e.Handled = true; return; } // S8: ignore our own input while the engine works
         if (Keyboard.FocusedElement is PasswordBox) return; // never inspect the API key box
         _scanner.OnText(e.Text, e.Timestamp);
     }
 
     private async void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (_vm.IsWorking) { e.Handled = true; _scanner.Reset(); return; }
         if (e.Key == Key.Escape && _vm.IsChatBusy) { _vm.StopChatCommand.Execute(null); e.Handled = true; return; }
         if (e.Key != Key.Enter && e.Key != Key.Return) return;
         if (Keyboard.FocusedElement is PasswordBox) { _scanner.Reset(); return; }
@@ -74,8 +97,28 @@ public partial class MainWindow : Window
                 tb.CaretIndex = tb.Text.Length;
             }
             _vm.ScanText = "";
+            if (Tabs.SelectedIndex == CountsTab && _vm.Counts is not null)
+            {
+                // Scan-and-count mode: the scan picks the item, then the owner types the count.
+                await _vm.Counts.HandleScanAsync(code);
+                return;
+            }
             Tabs.SelectedIndex = 0;
             await _vm.HandleScanAsync(code);
+            return;
+        }
+
+        if (_vm.Counts is not null && Keyboard.FocusedElement == CountUpcBox)
+        {
+            e.Handled = true;
+            await _vm.Counts.ShowItemCommand.ExecuteAsync(null);
+            return;
+        }
+        if (_vm.Counts is not null && Keyboard.FocusedElement == CountBox)
+        {
+            e.Handled = true;
+            await _vm.Counts.AddCountCommand.ExecuteAsync(null);
+            if (_vm.Counts.UpcText.Length == 0) CountUpcBox.Focus();
             return;
         }
 
@@ -103,7 +146,12 @@ public partial class MainWindow : Window
     {
         Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, () =>
         {
-            if (!IsActive || Tabs.SelectedIndex != 0) return;
+            if (IsActive && Tabs.SelectedIndex == CountsTab && !_vm.IsWorking && Keyboard.FocusedElement is not TextBox)
+            {
+                CountUpcBox.Focus();
+                return;
+            }
+            if (!IsActive || Tabs.SelectedIndex != 0 || _vm.IsWorking) return;
             var focused = Keyboard.FocusedElement;
             if (focused is TextBox tb && tb != ScanBox && tb.IsEnabled) return;
             if (focused is PasswordBox or ComboBox or Selector) return;

@@ -24,9 +24,14 @@ dotnet test
 tools/run-in-wine.sh                      # just open it
 tools/run-in-wine.sh --search "lays cucumber" --pick 2 --scan 060410079591 --tab 3
 tools/run-in-wine.sh --demo-chat --chat "lays cucumber" --choose 2
+tools/run-in-wine.sh --stage "060410079591:price=4.79,max=30" --stage "60410079966:price=9.99" --dryrun
+tools/run-in-wine.sh --mock-unverified 60410079966 --stage "060410079591:price=4.79" --stage "60410079966:price=4.49" --dryrun --save --tab 1
+tools/run-in-wine.sh --tab 2 --count 060410079591=10 --count 4011=25 --make-sheet "Chips aisle" --post-first
 ```
 
-The `--search`, `--pick`, `--scan`, `--chat`, `--choose` and `--tab` options are for demos only: they feed
+The `--search`, `--pick`, `--scan`, `--chat`, `--choose`, `--stage`, `--dryrun`, `--save` (auto-confirms), `--save-dialog`,
+`--mock-unverified`, `--mock-fail`, `--count`, `--make-sheet` (auto-confirms), `--post-first` (opens the real
+post dialog), `--edit` and `--tab` options are for demos only: they feed
 input to the app after it starts. `--demo-chat` swaps Claude for a scripted stand-in that uses the real
 read-only tools, so the chat can be checked without an API key or any cost. Wine is fine for checking layout,
 but focus handling and scanner timing need a real Windows PC.
@@ -34,6 +39,18 @@ but focus handling and scanner timing need a real Windows PC.
 | Chat with numbered choices | After picking a choice | Settings |
 |---|---|---|
 | ![](docs/screenshots/chat-choices.png) | ![](docs/screenshots/chat-picked.png) | ![](docs/screenshots/settings.png) |
+
+| Pending changes after a dry run | Changing an item on the item card |
+|---|---|
+| ![](docs/screenshots/pending-dry-run.png) | ![](docs/screenshots/item-change-form.png) |
+
+| SAVE confirmation | History |
+|---|---|
+| ![](docs/screenshots/save-confirm.png) | ![](docs/screenshots/history.png) |
+
+| Make a stock sheet | Post a stock sheet (type the number) |
+|---|---|
+| ![](docs/screenshots/stock-sheet-confirm.png) | ![](docs/screenshots/stock-post-confirm.png) |
 
 ## Install on the store PC
 
@@ -80,10 +97,31 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
       scans are passed to Claude as context. There is a cost estimate in the chat footer (`usage.json`), plus
       *Test connection* and *New chat*. Tested end to end against a local fake API server; **not yet tried with
       a real API key.**
-- [ ] Phase 3: pending changes, validation, dry run via the PowerShell scripts
-- [ ] Phase 4: SAVE + history
+- [x] **Phase 3** (not yet released): pending changes list, filled by Claude (`stage_changes`) or by **Change…** on the item card.
+      Every row is checked with the S7 safety rules. Rows that fail stay visible as *Skipped* with the reason.
+      Large changes need the owner's **Allow large change** (Force=Y); Claude can't set it.
+      **Dry run** (button or Claude's `run_dry_run`) uses the mock engine or `Invoke-EsCsv.ps1 -DryRun` (Settings → *Dry runs with*),
+      behind a full-window "don't touch" overlay. SAVE turns on only when the current list just passed a dry run; any add,
+      edit or remove turns it off again.
+      **To check on the store PC:** the exact status strings in the results CSV, where `Done\` results land for a `-Path`
+      outside `Inbox\`, and whether Force also covers the 50% price/cost rule.
+- [x] **Phase 4** (not yet released): **SAVE** shows every change as `Item — Field: Now → New` (Cancel is the default), then runs
+      `Invoke-EsCsv.ps1 -Path` from `Inbox\` with exactly the CSV that passed the dry run (SHA-256 checked). The app then reads
+      every value back from the database: a mismatch makes the row *Unverified*, with the values it found. An apply is
+      never cancelled half-way. A save cut off by a crash is reported at the next start and listed in History; nothing
+      is re-applied. **History** lists `Done\` results (newest first, filter, dry runs on/off), the rows, and matching log lines.
+      Mock saves change only the sample data. The overlay shows elapsed and expected time; *Stop after current item*
+      (U8) needs progress output from the scripts, so it's still to do.
 - [ ] Phase 5: receipts
-- [ ] Phase 6: stock counts
+- [x] **Phase 6** (not yet released): **Stock counts** tab. With the tab open, a scan picks the item, then type the count
+      and press Enter (counts of the same item can add up); or import a `UPC,Count` CSV; or Claude adds counts you give it
+      (`stock_count_preview`). Each row shows counted, system on-hand and over/short (with value at cost); the list is kept
+      if the app closes. **Check** runs `New-EsStockSheet.ps1 -Check` (changes nothing). **Make stock sheet** asks first
+      (it uses a sheet number), refuses counts that were already imported (imports add up in eStream), and records the
+      sheet number. **Post** is a button only: a `Publish-EsStockSheet.ps1 -DryRun` check, then a window where you must
+      type the sheet number (Enter does nothing until it matches), then the real post. Only sheets this app made can be
+      posted, once; sheets in Settings → *Protected sheets* never. The first real post is flagged as one to watch.
+      The mock engine makes TEST sheets (90001…) that only change the sample data.
 - [ ] Phase 7: store-PC acceptance
 
 ## To check against the real scripts (TODOs in the code)

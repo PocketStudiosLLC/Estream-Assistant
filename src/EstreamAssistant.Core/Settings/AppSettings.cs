@@ -12,6 +12,14 @@ public enum DataSourceKind
     Sql,
 }
 
+public enum ExecutorKind
+{
+    /// <summary>Simulated dry runs (dev PC, or trying the app safely).</summary>
+    Mock,
+    /// <summary>The real engine: the PowerShell scripts in the engine folder drive eStream (store PC).</summary>
+    PowerShell,
+}
+
 /// <summary>
 /// User settings saved as JSON in %LOCALAPPDATA%\eStreamAssistant\settings.json.
 /// The API key is NOT stored here; see <see cref="ISecretStore"/>.
@@ -27,6 +35,13 @@ public sealed class AppSettings
 
     // Engine
     public string EngineFolder { get; set; } = @"C:\eStreamAutomation";
+    public ExecutorKind Executor { get; set; } = ExecutorKind.Mock;
+    public int ScriptTimeoutBaseSeconds { get; set; } = 60;
+    public int ScriptTimeoutPerItemSeconds { get; set; } = 30;
+    /// <summary>S6: the owner's own open stock sheets the app must never touch. Local only (never in the repo).</summary>
+    public List<int> ProtectedSheets { get; set; } = [];
+    /// <summary>S6: pending price batches that aren't ours. Local only.</summary>
+    public List<int> ProtectedBatches { get; set; } = [];
 
     // Claude
     public string Model { get; set; } = "claude-opus-5-5";
