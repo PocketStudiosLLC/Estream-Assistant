@@ -1,0 +1,67 @@
+# Builds the Windows installer and publishes a GitHub release when a version tag is pushed:
+#   git tag v0.1.0 && git push origin v0.1.0
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+      INNO_VERSION: 6.7.4
+      INNO_SHA256: a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: dotnet test tests/EstreamAssistant.Tests -c Release
+
+      - name: Publish app
+        run: dotnet publish src/EstreamAssistant.App -c Release -r win-x64 -p:Version=${{ steps.ver.outputs.version }} -o publish/win-x64
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $tag = "is-" + $env:INNO_VERSION.Replace('.', '_')
+          $exe = "$env:RUNNER_TEMP\innosetup.exe"
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$env:INNO_VERSION.exe" -OutFile $exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup checksum mismatch: $hash" }
+          Start-Process $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER',"/DIR=$env:RUNNER_TEMP\inno" -Wait
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\inno\ISCC.exe" /Q "/DAppVersion=${{ steps.ver.outputs.version }}" installer\EstreamAssistant.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-FileHash dist\*.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist\SHA256SUMS.txt
+
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "docs/releases/${{ github.ref_name }}.md"
+          $args = @('release', 'create', '${{ github.ref_name }}', 'dist/eStreamAssistant-Setup-${{ steps.ver.outputs.version }}.exe', 'dist/SHA256SUMS.txt',
+                    '--title', 'eStream Assistant ${{ steps.ver.outputs.version }}')
+          if (Test-Path $notes) { $args += @('--notes-file', $notes) } else { $args += '--generate-notes' }
+          if ('${{ steps.ver.outputs.version }}' -match '^0\.') { $args += '--prerelease' }
+          gh @args
