@@ -250,14 +250,15 @@ public sealed class ClaudeChatServiceTests : IDisposable
         },
     };
 
-    private static string ToolUseTurn() =>
+    private static string ToolUseTurn() => ToolUseTurn("lookup_item", ["{\"upc\": \"0604100", "79591\"}"]);
+
+    private static string ToolUseTurn(string tool, string[] jsonParts) =>
         Ev("message_start", Start(1200, 0)) +
         Ev("content_block_start", new { type = "content_block_start", index = 0, content_block = new { type = "thinking", thinking = "", signature = "" } }) +
         Ev("content_block_delta", new { type = "content_block_delta", index = 0, delta = new { type = "signature_delta", signature = "sig-123" } }) +
         Ev("content_block_stop", new { type = "content_block_stop", index = 0 }) +
-        Ev("content_block_start", new { type = "content_block_start", index = 1, content_block = new { type = "tool_use", id = "toolu_1", name = "lookup_item", input = new { }, caller = new { type = "direct" } } }) +
-        Ev("content_block_delta", new { type = "content_block_delta", index = 1, delta = new { type = "input_json_delta", partial_json = "{\"upc\": \"0604100" } }) +
-        Ev("content_block_delta", new { type = "content_block_delta", index = 1, delta = new { type = "input_json_delta", partial_json = "79591\"}" } }) +
+        Ev("content_block_start", new { type = "content_block_start", index = 1, content_block = new { type = "tool_use", id = "toolu_1", name = tool, input = new { }, caller = new { type = "direct" } } }) +
+        string.Concat(jsonParts.Select(p => Ev("content_block_delta", new { type = "content_block_delta", index = 1, delta = new { type = "input_json_delta", partial_json = p } }))) +
         Ev("content_block_stop", new { type = "content_block_stop", index = 1 }) +
         Ev("message_delta", new { type = "message_delta", delta = new { stop_reason = "tool_use", stop_sequence = (string?)null }, usage = new { output_tokens = 40 } }) +
         Ev("message_stop", new { type = "message_stop" });
@@ -349,6 +350,49 @@ public sealed class ClaudeChatServiceTests : IDisposable
         // System prompt and tools are byte-identical across requests (cache-safe).
         Assert.Equal(r.GetProperty("system").GetRawText(), Requests[1].Body.RootElement.GetProperty("system").GetRawText());
         Assert.Equal(r.GetProperty("tools").GetRawText(), Requests[1].Body.RootElement.GetProperty("tools").GetRawText());
+    }
+
+    [Fact]
+    public async Task Receipts_go_before_the_text_as_image_and_document_blocks()
+    {
+        _responses.Enqueue(TextTurn("I read 3 lines."));
+        var svc = Make(out _);
+        var photo = new EstreamAssistant.Core.Receipts.ReceiptFile("pepsi.jpg", "image/jpeg", [0xFF, 0xD8, 0xFF, 1],
+            EstreamAssistant.Core.Receipts.ReceiptOrigin.File, null);
+        var pdf = new EstreamAssistant.Core.Receipts.ReceiptFile("inv.pdf", "application/pdf", "%PDF-1.7"u8.ToArray(),
+            EstreamAssistant.Core.Receipts.ReceiptOrigin.Inbox, null);
+
+        await svc.SendAsync("30% markup on the chips", [photo, pdf], null, CancellationToken.None);
+
+        var content = Requests[0].Body.RootElement.GetProperty("messages")[0].GetProperty("content");
+        Assert.Equal(5, content.GetArrayLength());
+        Assert.StartsWith("[receipt attached] pepsi.jpg (page 1 of 2)", content[0].GetProperty("text").GetString());
+        Assert.Equal("image", content[1].GetProperty("type").GetString());
+        Assert.Equal("base64", content[1].GetProperty("source").GetProperty("type").GetString());
+        Assert.Equal("image/jpeg", content[1].GetProperty("source").GetProperty("media_type").GetString());
+        Assert.Equal(Convert.ToBase64String(photo.Data), content[1].GetProperty("source").GetProperty("data").GetString());
+        Assert.Equal("document", content[3].GetProperty("type").GetString());
+        Assert.Equal("application/pdf", content[3].GetProperty("source").GetProperty("media_type").GetString());
+        Assert.Equal("30% markup on the chips", content[4].GetProperty("text").GetString());
+    }
+
+    /// <summary>Spec 12.3: an attempt to save through chat is refused by the app, whatever the model asks for.</summary>
+    [Theory]
+    [InlineData("save_changes")]
+    [InlineData("apply_changes")]
+    [InlineData("post_stock_sheet")]
+    public async Task Saving_through_chat_is_refused(string tool)
+    {
+        _responses.Enqueue(ToolUseTurn(tool, ["{}"]));
+        _responses.Enqueue(TextTurn("I can't save. Please press SAVE yourself."));
+        var svc = Make(out _);
+
+        var result = await svc.SendAsync("save it now", null, CancellationToken.None);
+
+        Assert.Equal("I can't save. Please press SAVE yourself.", result.Text);
+        var toolResult = Requests[1].Body.RootElement.GetProperty("messages")[2].GetProperty("content")[0];
+        Assert.True(toolResult.GetProperty("is_error").GetBoolean());
+        Assert.Contains("Unknown tool", toolResult.GetProperty("content").GetRawText());
     }
 
     [Fact]

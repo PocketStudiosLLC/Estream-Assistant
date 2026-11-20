@@ -8,6 +8,7 @@ using EstreamAssistant.Core.Claude;
 using EstreamAssistant.Core.Counts;
 using EstreamAssistant.Core.Data;
 using EstreamAssistant.Core.Logging;
+using EstreamAssistant.Core.Receipts;
 using EstreamAssistant.Core.Settings;
 
 namespace EstreamAssistant.App;
@@ -55,7 +56,8 @@ public partial class App : Application
 
         var secrets = new DpapiSecretStore(paths.ApiKeyFile);
         var settingsVm = new SettingsViewModel(settings, paths, secrets, _log);
-        var usage = new UsageTracker(paths.UsageFile);
+        var usage = new UsageTracker(paths.UsageFile, m => settings.ModelPrices.GetValueOrDefault(m));
+        ScriptRunner.Log = _log.Info;
         IChangeExecutor executor = settings.Executor == ExecutorKind.PowerShell
             ? new PowerShellChangeExecutor(settings.EngineFolder, paths.RunsFolder, _log)
             {
@@ -80,7 +82,13 @@ public partial class App : Application
             ? new PowerShellStockSheetExecutor(settings.EngineFolder, paths.RunsFolder, _log)
             : new MockStockSheetExecutor(repo);
         var counts = new StockCounts(lookup, sheetExecutor, () => settings.ProtectedSheets, paths.Root, _log);
-        var tools = new ToolExecutor(lookup, settings, pending, counts);
+        var receipt = new ReceiptSession(lookup, () => settings.PriceEndings);
+        // F5.1/F5.8: the engine's Receipts folder on the store PC; a private one on the dev PC.
+        var receiptInbox = Directory.Exists(settings.EngineFolder)
+            ? Path.Combine(settings.EngineFolder, "Receipts")
+            : Directory.CreateDirectory(Path.Combine(paths.Root, "mock-engine", "Receipts")).FullName;
+        var receiptFolder = new ReceiptFolder(receiptInbox, _log);
+        var tools = new ToolExecutor(lookup, settings, pending, counts, receipt);
         IChatService chat = e.Args.Contains("--demo-chat")
             ? new DemoChatService(tools)
             : new ClaudeChatService(secrets.GetApiKey, settings, tools, usage, _log);
@@ -90,6 +98,8 @@ public partial class App : Application
             History = new HistoryViewModel(history),
             Counts = new CountsViewModel(counts, lookup, _log),
         };
+        mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder);
+        _log.Info(receiptFolder.Start() ? $"Watching {receiptFolder.Inbox} for receipts." : $"No receipts folder at {receiptFolder.Inbox}; not watching.");
         counts.WorkStarted += (_, what) => mainVm.ShowWorking(what, !counts.IsMock);
         counts.WorkFinished += (_, _) => mainVm.HideWorking();
         counts.EngineBlocker = () => !counts.IsMock && mainVm.EStreamStatus == StatusLevel.Bad
@@ -100,6 +110,7 @@ public partial class App : Application
         window.Show();
 
         await mainVm.InitializeAsync();
+        await mainVm.AttachWaitingReceiptsAsync();
         if (interrupted is not null)
         {
             _log.Warn($"Found a save that didn't finish (started {interrupted.Started}): {interrupted.JournalFile}");
@@ -199,6 +210,23 @@ public partial class App : Application
                 case "--edit":
                     i--;
                     vm.StartEditCommand.Execute(null);
+                    break;
+                case "--attach":
+                    // --attach "C:\path\receipt.jpg"  (puts it in the tray, like a drop)
+                    await vm.AttachPathsAsync([value], ReceiptOrigin.File);
+                    break;
+                case "--send":
+                    i--; // presses Send (sends the tray with "Read this receipt.")
+                    await vm.SendChatCommand.ExecuteAsync(null);
+                    break;
+                case "--pick-line":
+                    // --pick-line 2  (picks the first candidate for receipt line 2)
+                    var lineVm = vm.ReceiptLines.FirstOrDefault(l => l.Number == int.Parse(value));
+                    if (lineVm?.Candidates.FirstOrDefault() is { } cand) await vm.ChooseReceiptCandidateCommand.ExecuteAsync(cand);
+                    break;
+                case "--stage-receipt":
+                    i--; // presses "Add ticked to pending" in the receipt table
+                    await vm.StageReceiptCommand.ExecuteAsync(null);
                     break;
                 case "--demo-chat":
                     i--; // flag without a value

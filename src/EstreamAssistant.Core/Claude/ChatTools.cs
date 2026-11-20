@@ -20,6 +20,8 @@ public static class ChatTools
     public const string RunDryRun = "run_dry_run";
     public const string StockCountPreview = "stock_count_preview";
     public const string CreateStockSheet = "create_stock_sheet";
+    public const string ShowReceiptLines = "show_receipt_lines";
+    public const string PriceReceiptLines = "price_receipt_lines";
 
     public sealed record Definition(string Name, string Description, string SchemaJson)
     {
@@ -114,6 +116,41 @@ public static class ChatTools
             {"type":"object","properties":{
               "comment":{"type":"string","description":"Short sheet comment, e.g. 'Chips aisle'. Up to 60 characters."}
             },"required":["comment"],"additionalProperties":false}
+            """),
+        new(ShowReceiptLines,
+            "Receipts: put the lines you read from the attached receipt or invoice into the owner's receipt table. " +
+            "The app matches each line to an eStream item (UPC first, then name) and works out the unit cost itself " +
+            "(case price / (packs per case x units per pack)). Copy numbers exactly as printed; NEVER invent or guess a number: " +
+            "if any part of a line can't be read for sure, send it with readable=false. Leave out tax, totals, discounts, deposit and eco-fee lines. " +
+            "Sending a line number again replaces that line (use this with upc set after the owner picks the item). Changes nothing in eStream.",
+            """
+            {"type":"object","properties":{
+              "source":{"type":"string","description":"Short name for the receipt, e.g. 'Pepsi invoice Nov 18'."},
+              "lines":{"type":"array","items":{"type":"object","properties":{
+                "line":{"type":"integer","description":"Line number on the receipt, from 1, top to bottom."},
+                "text":{"type":"string","description":"The item description exactly as printed."},
+                "code":{"type":["string","null"],"description":"UPC or vendor item code as printed, or null."},
+                "qty":{"type":["number","null"],"description":"How many cases/units were bought, or null."},
+                "case_price":{"type":["number","null"],"description":"Price of ONE case or pack before deposits and eco fees (not the line total), or null."},
+                "unit_price":{"type":["number","null"],"description":"Price of ONE selling unit, only if the receipt prints it per unit; otherwise null."},
+                "line_total":{"type":["number","null"],"description":"The line's extended total as printed, or null."},
+                "readable":{"type":"boolean","description":"false if you can't read the line's item or numbers for sure."},
+                "upc":{"type":["string","null"],"description":"The eStream UPC the owner confirmed for this line; null if not confirmed."},
+                "note":{"type":["string","null"],"description":"Anything the owner should know, e.g. 'price smudged'."}
+              },"required":["line","text","code","qty","case_price","unit_price","line_total","readable","upc","note"],"additionalProperties":false}}
+            },"required":["source","lines"],"additionalProperties":false}
+            """),
+        new(PriceReceiptLines,
+            "Receipts: work out proposed selling prices for receipt table lines from their new unit cost, e.g. when the owner says " +
+            "'30% markup on the chips'. Shows the prices in the receipt table; it does not stage them. Then tell the owner the prices (Now -> New) " +
+            "and stage them with stage_changes (price and case_cost) only once they agree.",
+            """
+            {"type":"object","properties":{
+              "lines":{"type":"array","items":{"type":"integer"},"description":"Receipt line numbers; empty for every matched line."},
+              "mode":{"type":"string","enum":["markup","margin"]},
+              "pct":{"type":"number","description":"The markup or margin percent, e.g. 30."},
+              "apply_endings":{"type":"boolean","description":"true to round up to the store's price endings."}
+            },"required":["lines","mode","pct","apply_endings"],"additionalProperties":false}
             """),
     ];
 }

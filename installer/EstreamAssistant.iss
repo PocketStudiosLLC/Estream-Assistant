@@ -1,5 +1,5 @@
 ; eStream Assistant installer (Inno Setup 6).
-; Build:  iscc /DAppVersion=0.1.1 /DPublishDir=..\publish\win-x64 installer\EstreamAssistant.iss
+; Build:  iscc /DAppVersion=0.1.2 /DPublishDir=..\publish\win-x64 installer\EstreamAssistant.iss
 ; Output: dist\eStreamAssistant-Setup-<version>.exe
 ;
 ; Installs for the current Windows user, no admin needed (spec: C:\eStreamAssistantApp\).

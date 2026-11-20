@@ -10,7 +10,7 @@
         Icon="pack://application:,,,/app.ico"
         Width="1280" Height="820" MinWidth="980" MinHeight="640"
         WindowStartupLocation="CenterScreen"
-        Style="{StaticResource {x:Type Window}}" Background="{StaticResource Panel}">
+        Style="{StaticResource {x:Type Window}}" Background="{StaticResource Panel}" AllowDrop="True">
 
     <Window.Resources>
         <!-- One feed message: owner on the right (blue), app/assistant on the left. -->
@@ -19,6 +19,23 @@
                     HorizontalAlignment="Left" Background="{StaticResource AppBubble}"
                     BorderBrush="{StaticResource Border}" BorderThickness="1">
                 <StackPanel>
+                    <ItemsControl ItemsSource="{Binding Attachments}" Margin="0,0,0,6"
+                                  Visibility="{Binding HasAttachments, Converter={StaticResource Visible}}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:AttachmentViewModel}">
+                                <Border CornerRadius="4" Margin="0,0,6,0" Background="#1F2A38" ToolTip="{Binding Name}">
+                                    <Grid>
+                                        <Image Source="{Binding Thumb}" MaxHeight="110" MaxWidth="96" Stretch="Uniform" />
+                                        <TextBlock Text="{Binding Name, StringFormat=PDF: {0}}" Margin="8" MaxWidth="160" TextWrapping="Wrap" FontSize="13"
+                                                   Visibility="{Binding IsPdf, Converter={StaticResource Visible}}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                     <TextBlock x:Name="BubbleText" Text="{Binding Text}" TextWrapping="Wrap" FontSize="16" />
                     <TextBlock Text="{Binding Status}" FontSize="13" FontStyle="Italic" Foreground="{StaticResource Muted}" Margin="0,2,0,0"
                                Visibility="{Binding HasStatus, Converter={StaticResource Visible}}" />
@@ -114,6 +131,35 @@
                         <DockPanel>
                             <TextBlock DockPanel.Dock="Top" Text="CHAT" Style="{StaticResource SectionTitle}" Margin="6,2,0,6" />
                             <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                                <!-- Receipts that go with the next message (nothing is sent until Send) -->
+                                <ItemsControl ItemsSource="{Binding Attachments}" Margin="0,0,0,6"
+                                              Visibility="{Binding HasAttachments, Converter={StaticResource Visible}}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:AttachmentViewModel}">
+                                            <Border BorderBrush="{StaticResource Accent}" BorderThickness="1" CornerRadius="6" Padding="4" Margin="0,0,6,4"
+                                                    Background="{StaticResource InputBg}">
+                                                <DockPanel>
+                                                    <Grid DockPanel.Dock="Left" Width="44" Height="44" Margin="0,0,6,0">
+                                                        <Image Source="{Binding Thumb}" Stretch="UniformToFill" />
+                                                        <TextBlock Text="PDF" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                   Visibility="{Binding IsPdf, Converter={StaticResource Visible}}" />
+                                                    </Grid>
+                                                    <Button DockPanel.Dock="Right" Content="×" Padding="6,0" MinHeight="24" FontSize="13" VerticalAlignment="Top"
+                                                            ToolTip="Don't send this one"
+                                                            Command="{Binding DataContext.RemoveAttachmentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}" />
+                                                    <StackPanel VerticalAlignment="Center" MaxWidth="200">
+                                                        <TextBlock Text="{Binding Name}" FontSize="13" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource Muted}" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -131,6 +177,8 @@
                                                 Visibility="{Binding IsChatBusy, Converter={StaticResource Hidden}}" />
                                         <Button Content="Stop" Command="{Binding StopChatCommand}"
                                                 Visibility="{Binding IsChatBusy, Converter={StaticResource Visible}}" />
+                                        <Button Content="Retry" Command="{Binding RetryChatCommand}" ToolTip="Send the message that didn't go through again"
+                                                Visibility="{Binding CanRetry, Converter={StaticResource Visible}}" />
                                     </StackPanel>
                                 </Grid>
                                 <DockPanel Margin="2,6,0,0">
@@ -139,10 +187,16 @@
                                     <TextBlock Text="{Binding UsageText}" FontSize="12" Foreground="{StaticResource Muted}" VerticalAlignment="Center"
                                                ToolTip="An estimate from token counts. The Anthropic Console has the real bill." />
                                 </DockPanel>
-                                <Border BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,6,0,0"
+                                <Border x:Name="DropZone" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6" Padding="8,4" Margin="0,6,0,0"
                                         Background="{StaticResource Panel}">
-                                    <TextBlock Text="Drop a receipt photo or PDF here (coming in Phase 5)"
-                                               Foreground="{StaticResource Muted}" HorizontalAlignment="Center" />
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Add receipt…" Command="{Binding PickReceiptCommand}" Padding="10,2" MinHeight="28" FontSize="13"
+                                                ToolTip="Pick a receipt or invoice photo or PDF" />
+                                        <Button DockPanel.Dock="Right" Content="Show receipt" Command="{Binding ToggleReceiptCommand}" Padding="10,2" MinHeight="28" FontSize="13"
+                                                Visibility="{Binding CanShowReceipt, Converter={StaticResource Visible}}" Margin="0,0,6,0" />
+                                        <TextBlock x:Name="DropText" Text="Drop a receipt photo or PDF here, or paste it (Ctrl+V)" TextWrapping="Wrap"
+                                                   Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                    </DockPanel>
                                 </Border>
                             </StackPanel>
                             <ScrollViewer x:Name="FeedScroll" VerticalScrollBarVisibility="Auto">
@@ -155,11 +209,12 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="{Binding ReceiptRowHeight}" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <!-- ITEM CARD -->
-                        <Border Style="{StaticResource Card}">
+                        <!-- ITEM CARD (hidden while the receipt table is shown) -->
+                        <Border Style="{StaticResource Card}" Visibility="{Binding ShowItemArea, Converter={StaticResource Visible}}">
                             <StackPanel>
                                 <DockPanel>
                                     <TextBlock Text="ITEM" Style="{StaticResource SectionTitle}" />
@@ -293,8 +348,91 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- RECEIPT TABLE (spec F5.7): line -> matched item -> cost -> proposed price -->
+                        <Border Grid.Row="2" Style="{StaticResource Card}" Visibility="{Binding ShowReceipt, Converter={StaticResource Visible}}">
+                            <DockPanel>
+                                <DockPanel DockPanel.Dock="Top">
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                                        <Button Content="Hide" Command="{Binding ToggleReceiptCommand}" Padding="8,2" MinHeight="26" FontSize="13"
+                                                ToolTip="Show the item card again (the receipt stays open)" />
+                                        <Button Content="Finish receipt" Command="{Binding FinishReceiptCommand}" Padding="8,2" MinHeight="26" FontSize="13"
+                                                ToolTip="Close the receipt and move it to Receipts\Done" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding ReceiptTitle}" Style="{StaticResource SectionTitle}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding ReceiptSummary}" FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <DockPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+                                    <Button DockPanel.Dock="Right" Content="Add ticked to pending" Style="{StaticResource PrimaryButton}" Command="{Binding StageReceiptCommand}"
+                                            ToolTipService.ShowOnDisabled="True"
+                                            ToolTip="Puts the new case cost (and the new price, where there is one) of each ticked line in Pending changes. Nothing is saved." />
+                                    <TextBlock Text="Costs leave out deposits and eco fees. New case costs are only used for the lines you tick." FontSize="12"
+                                               Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                </DockPanel>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding ReceiptLines}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type vm:ReceiptLineViewModel}">
+                                                <Border BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="2,6">
+                                                    <DockPanel>
+                                                        <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsChecked}" IsEnabled="{Binding CanCheck}"
+                                                                  VerticalAlignment="Top" Margin="0,2,8,0" ToolTip="Tick to add this line's new cost/price to Pending changes" />
+                                                        <StackPanel>
+                                                            <DockPanel>
+                                                                <Border DockPanel.Dock="Right" CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Top"
+                                                                        Background="{Binding StatusLevel, Converter={StaticResource StatusBrush}}">
+                                                                    <TextBlock Text="{Binding StatusText}" Foreground="#16181B" FontWeight="SemiBold" FontSize="12" />
+                                                                </Border>
+                                                                <TextBlock Text="{Binding ReceiptText}" FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                                            </DockPanel>
+                                                            <TextBlock Text="{Binding ItemText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                                       Visibility="{Binding ItemText, Converter={StaticResource Visible}}" />
+                                                            <TextBlock Text="{Binding MatchedByText}" FontSize="11" Foreground="{StaticResource Muted}"
+                                                                       Visibility="{Binding MatchedByText, Converter={StaticResource Visible}}" />
+                                                            <TextBlock Text="{Binding CostText}" FontSize="15" Foreground="{StaticResource AccentText}" TextWrapping="Wrap"
+                                                                       ToolTip="{Binding CostMath}" Visibility="{Binding CostText, Converter={StaticResource Visible}}" />
+                                                            <TextBlock Text="{Binding CostMath}" FontSize="11" Foreground="{StaticResource Muted}"
+                                                                       Visibility="{Binding CostMath, Converter={StaticResource Visible}}" />
+                                                            <TextBlock x:Name="Price" Text="{Binding PriceText}" FontSize="14" TextWrapping="Wrap"
+                                                                       Visibility="{Binding PriceText, Converter={StaticResource Visible}}" />
+                                                            <TextBlock Text="{Binding WarningsText}" FontSize="13" Foreground="{StaticResource Warning}" TextWrapping="Wrap"
+                                                                       Visibility="{Binding WarningsText, Converter={StaticResource Visible}}" />
+                                                            <TextBlock Text="{Binding NoteText}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                                                       Visibility="{Binding NoteText, Converter={StaticResource Visible}}" />
+                                                            <ItemsControl ItemsSource="{Binding Candidates}" Margin="0,4,0,0"
+                                                                          Visibility="{Binding HasCandidates, Converter={StaticResource Visible}}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate DataType="{x:Type vm:ReceiptCandidateViewModel}">
+                                                                        <Button Style="{StaticResource ChoiceButton}" Padding="8,3" ToolTip="This is the item on the receipt"
+                                                                                Command="{Binding DataContext.ChooseReceiptCandidateCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                                CommandParameter="{Binding}">
+                                                                            <StackPanel>
+                                                                                <TextBlock Text="{Binding Label}" FontSize="14" />
+                                                                                <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource Muted}" />
+                                                                            </StackPanel>
+                                                                        </Button>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                    </DockPanel>
+                                                </Border>
+                                                <DataTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding HasProposedPrice}" Value="True">
+                                                        <Setter TargetName="Price" Property="FontWeight" Value="SemiBold" />
+                                                        <Setter TargetName="Price" Property="Foreground" Value="{StaticResource AccentText}" />
+                                                    </DataTrigger>
+                                                </DataTemplate.Triggers>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
+
                         <!-- PENDING CHANGES -->
-                        <Border Grid.Row="2" Style="{StaticResource Card}">
+                        <Border Grid.Row="3" Style="{StaticResource Card}">
                             <DockPanel>
                                 <DockPanel DockPanel.Dock="Top">
                                     <TextBlock Text="{Binding PendingRows.Count, StringFormat=PENDING CHANGES ({0})}" Style="{StaticResource SectionTitle}" />
@@ -325,6 +463,10 @@
                                                 <DataTemplate DataType="{x:Type vm:PendingRowViewModel}">
                                                     <Border BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="2,6">
                                                         <DockPanel>
+                                                            <Button DockPanel.Dock="Right" Content="Edit" Padding="8,2" MinHeight="26" FontSize="13" VerticalAlignment="Top"
+                                                                    ToolTip="Change the New values (opens the item's change form)" Margin="0,0,4,0"
+                                                                    Command="{Binding DataContext.EditPendingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}" />
                                                             <Button DockPanel.Dock="Right" Content="×" Padding="8,2" MinHeight="26" FontSize="13" VerticalAlignment="Top"
                                                                     ToolTip="Remove this row"
                                                                     Command="{Binding DataContext.RemovePendingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -391,6 +533,12 @@
                                                Visibility="{Binding Text, ElementName=HistoryFilter, Converter={StaticResource Hidden}}" />
                                 </Grid>
                             </DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                                <ComboBox ItemsSource="{Binding Periods}" SelectedItem="{Binding Period}" DisplayMemberPath="Label" MinWidth="150" Margin="0,0,8,0"
+                                          ToolTip="Show runs from this time" />
+                                <ComboBox ItemsSource="{Binding Statuses}" SelectedItem="{Binding Status}" DisplayMemberPath="Label" MinWidth="170"
+                                          ToolTip="Show only runs where everything went through, or only runs with a problem" />
+                            </StackPanel>
                             <TextBlock DockPanel.Dock="Bottom" Text="{Binding CountText}" FontSize="12" Foreground="{StaticResource Muted}" Margin="2,6,0,0" />
                             <ListBox ItemsSource="{Binding Runs}" SelectedItem="{Binding Selected}" Background="Transparent" BorderThickness="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -649,7 +797,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="160" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
                                     <TextBlock Text="Saved key" Style="{StaticResource FieldLabel}" />
                                     <TextBlock Grid.Column="1" Text="{Binding ApiKeyDisplay}" Style="{StaticResource FieldValue}" />
                                     <Button Grid.Column="2" Content="Remove key" Command="{Binding ClearApiKeyCommand}"
@@ -668,9 +816,26 @@
                                             IsEnabled="{Binding HasApiKey}" HorizontalAlignment="Left" Margin="0,6,0,0" />
                                     <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding TestResult}" TextWrapping="Wrap"
                                                Style="{StaticResource FieldValue}" Margin="10,6,0,0" />
+                                    <TextBlock Grid.Row="5" Text="Long chat" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Grid.Row="5" Grid.Column="1" Margin="0,4" Text="{Binding LongChatTurns}"
+                                             ToolTip="After this many messages in one chat, the app suggests New chat (long chats cost more). 0 = never." />
+                                    <CheckBox Grid.Row="6" Grid.Column="1" Margin="0,6" IsChecked="{Binding DebugLogging}"
+                                              Content="Debug log: also write chat messages to the app log" />
                                 </Grid>
+                                <TextBlock Text="{Binding PricesLabel}" Style="{StaticResource FieldLabel}" Margin="0,10,0,2" />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Input $" Style="{StaticResource FieldLabel}" Margin="0,0,6,0" />
+                                    <TextBox Width="80" Margin="0,4,16,4" Text="{Binding PriceIn}" />
+                                    <TextBlock Text="Output $" Style="{StaticResource FieldLabel}" Margin="0,0,6,0" />
+                                    <TextBox Width="80" Margin="0,4,16,4" Text="{Binding PriceOut}" />
+                                    <TextBlock Text="Cache read $" Style="{StaticResource FieldLabel}" Margin="0,0,6,0" />
+                                    <TextBox Width="80" Margin="0,4" Text="{Binding PriceCacheRead}"
+                                             ToolTip="Used only for the cost estimate. Check the Anthropic pricing page if prices change." />
+                                </StackPanel>
+                                <TextBlock Text="{Binding UsageDetail}" TextWrapping="Wrap" Margin="0,8,0,0" FontSize="13"
+                                           ToolTip="An estimate from token counts. The Anthropic Console has the real bill." />
                                 <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,10,0,0" FontSize="13"
-                                           Text="If Claude's safety checks decline a request, it is automatically retried on a backup Claude model (server-side fallback). Claude can only look things up in this version; it can't change anything in eStream." />
+                                           Text="If Claude's safety checks decline a request, it is automatically retried on a backup Claude model (server-side fallback). Claude can look things up, fill the pending list and run dry runs; only you can SAVE or post a stock sheet." />
                             </StackPanel>
                         </Border>
 
@@ -696,7 +861,7 @@
                                 <TextBlock Text="ESTREAM" Style="{StaticResource SectionTitle}" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
                                     <TextBlock Text="Data source" Style="{StaticResource FieldLabel}" />
                                     <ComboBox Grid.Column="1" Margin="0,4" ItemsSource="{Binding DataSources}" SelectedItem="{Binding DataSource}"
                                               ToolTip="Mock = sample data on the dev PC. Sql = the real eStream database (read-only), on the store PC." />
@@ -712,6 +877,12 @@
                                     <TextBlock Grid.Row="5" Text="Protected sheets" Style="{StaticResource FieldLabel}" />
                                     <TextBox Grid.Row="5" Grid.Column="1" Margin="0,4" Text="{Binding ProtectedSheets}"
                                              ToolTip="Stock sheet numbers the app must never touch (your own open sheets), e.g. 10001, 10002. Kept on this PC only." />
+                                    <TextBlock Grid.Row="6" Text="Protected batches" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Grid.Row="6" Grid.Column="1" Margin="0,4" Text="{Binding ProtectedBatches}"
+                                             ToolTip="Pending price batch numbers that aren't the app's. Kept on this PC only." />
+                                    <Button Grid.Row="7" Grid.Column="1" Content="Open Power Automate Desktop" Command="{Binding OpenPadFlowCommand}"
+                                            HorizontalAlignment="Left" Margin="0,6,0,0"
+                                            ToolTip="For running the &quot;Estream&quot; flow by hand. The app itself runs the scripts directly." />
                                     <TextBlock Grid.Row="4" Text="Dry runs with" Style="{StaticResource FieldLabel}" />
                                     <ComboBox Grid.Row="4" Grid.Column="1" Margin="0,4" ItemsSource="{Binding Executors}" SelectedItem="{Binding Executor}"
                                               ToolTip="Mock = simulated, eStream is not touched. PowerShell = the real scripts type into eStream (then Exit without saving)." />
@@ -724,13 +895,19 @@
                                 <TextBlock Text="SCANNER" Style="{StaticResource SectionTitle}" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
                                     <TextBlock Text="Key gap (ms)" Style="{StaticResource FieldLabel}" />
                                     <TextBox Grid.Column="1" Margin="0,4" Text="{Binding ScanMaxInterKeyMs}"
                                              ToolTip="Keys closer together than this count as a scanner. Default 40." />
                                     <TextBlock Grid.Row="1" Text="Scan list (sec)" Style="{StaticResource FieldLabel}" />
                                     <TextBox Grid.Row="1" Grid.Column="1" Margin="0,4" Text="{Binding ScanListWindowSeconds}"
                                              ToolTip="Scans closer together than this build one list. Default 10." />
+                                    <TextBlock Grid.Row="2" Text="Min digits" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Grid.Row="2" Grid.Column="1" Margin="0,4" Text="{Binding ScanMinDigits}"
+                                             ToolTip="Shortest barcode the scanner sends. Default 6. Applies after a restart." />
+                                    <TextBlock Grid.Row="3" Text="Max digits" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Grid.Row="3" Grid.Column="1" Margin="0,4" Text="{Binding ScanMaxDigits}"
+                                             ToolTip="Longest barcode the scanner sends. Default 14. Applies after a restart." />
                                 </Grid>
                             </StackPanel>
                         </Border>

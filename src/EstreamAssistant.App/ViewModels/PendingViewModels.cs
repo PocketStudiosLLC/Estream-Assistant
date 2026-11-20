@@ -48,19 +48,25 @@ public sealed partial class ItemEditViewModel : ObservableObject
 {
     private readonly AppSettings _settings;
 
-    public ItemEditViewModel(Item item, AppSettings settings)
+    /// <param name="pending">The item's pending change, if it has one: the form starts from those New values.</param>
+    public ItemEditViewModel(Item item, AppSettings settings, ChangeRequest? pending = null)
     {
         Item = item;
         _settings = settings;
-        _price = item.Price.ToString("0.00", CultureInfo.InvariantCulture);
-        _for = item.For.ToString(CultureInfo.InvariantCulture);
-        _caseCost = item.CaseCost.ToString("0.00", CultureInfo.InvariantCulture);
-        _deposit = item.Deposit.ToString(CultureInfo.InvariantCulture);
-        _levy = item.Levy.ToString(CultureInfo.InvariantCulture);
-        _onHand = item.OnHand.ToString("0.##", CultureInfo.InvariantCulture);
-        _min = item.Min.ToString("0.##", CultureInfo.InvariantCulture);
-        _max = item.Max.ToString("0.##", CultureInfo.InvariantCulture);
+        EditsPending = pending is not null;
+        _price = (pending?.Price ?? item.Price).ToString("0.00", CultureInfo.InvariantCulture);
+        _for = (pending?.For ?? item.For).ToString("0", CultureInfo.InvariantCulture);
+        _caseCost = (pending?.CaseCost ?? item.CaseCost).ToString("0.00", CultureInfo.InvariantCulture);
+        _deposit = (pending?.Deposit ?? item.Deposit).ToString(CultureInfo.InvariantCulture);
+        _levy = (pending?.Levy ?? item.Levy).ToString(CultureInfo.InvariantCulture);
+        _onHand = (pending?.OnHand ?? item.OnHand).ToString("0.##", CultureInfo.InvariantCulture);
+        _min = (pending?.Min ?? item.Min).ToString("0.##", CultureInfo.InvariantCulture);
+        _max = (pending?.Max ?? item.Max).ToString("0.##", CultureInfo.InvariantCulture);
+        _reason = pending?.Reason ?? "";
     }
+
+    /// <summary>True when the item already has a pending row, which this form replaces.</summary>
+    public bool EditsPending { get; }
 
     public Item Item { get; }
 
@@ -72,7 +78,7 @@ public sealed partial class ItemEditViewModel : ObservableObject
     [ObservableProperty] private string _onHand;
     [ObservableProperty] private string _min;
     [ObservableProperty] private string _max;
-    [ObservableProperty] private string _reason = "";
+    [ObservableProperty] private string _reason;
     [ObservableProperty] private string _message = "";
 
     public string PriceFromCostLabel =>

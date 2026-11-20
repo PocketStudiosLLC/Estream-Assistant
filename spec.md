@@ -205,6 +205,7 @@ ScannerInput  ClaudeService ──tools──► ToolRouter ──► ChangeList
 - **F5.6** The app **offers** to update CaseCost and does not assume it.
 - **F5.7** Extracted lines appear in a receipt table (line → matched item → cost → proposed price) before anything is staged.
 - **F5.8** Handled receipts are moved to `Receipts\Done\` (with a timestamp suffix if the name already exists).
+- **F5.9** (as built) Receipts sit in a tray above the chat box until the owner presses Send (S11). Claude fills the receipt table with `show_receipt_lines`; matching, unit cost, warnings and proposed prices (`price_receipt_lines`) are worked out in C#. The owner can pick the item for an ambiguous line in the table and stage ticked lines (new case cost, plus the proposed price if there is one). *Finish receipt* files the receipt: files from `Receipts\` are moved to `Done\`, files dropped from elsewhere are copied there (the original stays), pasted pictures are written there.
 
 ### 6.6 Stock counts
 - **F6.1** Input: scan-and-count mode (scan, type count, Enter), CSV import (`UPC,Count`), or counts read from a photo via Claude.
@@ -262,6 +263,8 @@ All tools use JSON Schema with `strict: true` and `additionalProperties: false`.
 | `run_dry_run` | — | Per-row `{status, message}` | Runs the executor dry run on the current grid (shows the overlay) |
 | `stock_count_preview` | `rows: [{upc, count}]`, `add_to_list: bool` | Over/short per row | With `add_to_list`, the counts go into the count list on the Stock counts tab |
 | `create_stock_sheet` | `comment: string` | `{sheet, message}` or cancelled | Uses the **count list** (what the owner sees), not rows from Claude. **Blocks on an in-app confirm dialog** |
+| `show_receipt_lines` | `source: string`, `lines: [{line, text, code?, qty?, case_price?, unit_price?, line_total?, readable, upc?, note?}]` | Per line: status, matched item or candidates, new unit/case cost, warnings | Fills the receipt table (lines replace earlier ones with the same number). Changes nothing in eStream |
+| `price_receipt_lines` | `lines: int[]` (empty = all), `mode`, `pct`, `apply_endings` | Proposed price and GM% per line | Shows the prices in the receipt table; does not stage them |
 
 **Not available as tools, ever:** apply/save, post stock sheet, any SQL write, running arbitrary scripts or shell commands.
 

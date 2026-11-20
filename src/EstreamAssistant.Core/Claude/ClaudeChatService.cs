@@ -6,6 +6,7 @@ using Anthropic.Exceptions;
 using Anthropic.Models.Beta.Messages;
 using EstreamAssistant.Core.Data;
 using EstreamAssistant.Core.Logging;
+using EstreamAssistant.Core.Receipts;
 using EstreamAssistant.Core.Settings;
 
 namespace EstreamAssistant.Core.Claude;
@@ -29,7 +30,10 @@ public interface IChatService
     /// <summary>Adds app context (e.g. a scan) to the start of the next owner message.</summary>
     void AddContextNote(string note);
     void Reset();
-    Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct);
+    Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct) =>
+        SendAsync(ownerText, [], progress, ct);
+    /// <summary>Sends the owner's message with receipt photos/PDFs (F5.2) placed before the text.</summary>
+    Task<ChatTurnResult> SendAsync(string ownerText, IReadOnlyList<ReceiptFile> attachments, IProgress<ChatEvent>? progress, CancellationToken ct);
     Task TestConnectionAsync(CancellationToken ct);
 }
 
@@ -46,6 +50,7 @@ public sealed class ClaudeChatService : IChatService
 {
     public const string FallbackBeta = "server-side-fallback-2026-07-01";
     public const int MaxToolRounds = 8;
+    public const int MaxAttachments = 8;
 
     private readonly Func<string?> _apiKey;
     private readonly AppSettings _settings;
@@ -113,15 +118,23 @@ public sealed class ClaudeChatService : IChatService
         }
     }
 
-    public async Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct)
+    public Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct) =>
+        SendAsync(ownerText, [], progress, ct);
+
+    public async Task<ChatTurnResult> SendAsync(string ownerText, IReadOnlyList<ReceiptFile> attachments, IProgress<ChatEvent>? progress, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(ownerText)) throw new ArgumentException("Message is empty.", nameof(ownerText));
+        if (attachments.Count > MaxAttachments) throw new ChatException($"Send at most {MaxAttachments} receipt pages at a time.");
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
         int snapshot = _history.Count;
         try
         {
             var client = Client();
-            _history.Add(new BetaUserMessageParam { Content = BuildOwnerContent(ownerText) });
+            _history.Add(new BetaUserMessageParam { Content = BuildOwnerContent(ownerText, attachments) });
+            if (_settings.DebugLogging) _log?.Info($"[debug] Owner: {ownerText}");
+            bool warm = snapshot > 0;
+            if (attachments.Count > 0)
+                _log?.Info($"Sent {attachments.Count} receipt file(s): {string.Join(", ", attachments.Select(a => $"{a.FileName} {a.MediaType} {a.SizeText}"))}");
 
             decimal cost = 0;
             long cacheRead = 0;
@@ -134,6 +147,9 @@ public sealed class ClaudeChatService : IChatService
                 var sample = new UsageSample(u.InputTokens, u.OutputTokens, u.CacheReadInputTokens ?? 0, u.CacheCreationInputTokens ?? 0);
                 cost += _usage.Record(model, sample);
                 cacheRead += sample.CacheReadTokens;
+                // Spec 7.1: on a warm conversation the cached prefix should be read back.
+                if ((warm || round > 0) && sample.CacheReadTokens == 0)
+                    _log?.Warn("Prompt cache: 0 tokens read on a warm conversation (something before the cache breakpoint changed, or the cache expired).");
                 _log?.Info($"Claude {model}: stop={msg.StopReason} in={sample.InputTokens} out={sample.OutputTokens} " +
                            $"cache_read={sample.CacheReadTokens} cache_write={sample.CacheWriteTokens} est=${cost:0.0000}");
 
@@ -152,6 +168,7 @@ public sealed class ClaudeChatService : IChatService
 
                 if (stop != "tool_use")
                 {
+                    if (_settings.DebugLogging) _log?.Info($"[debug] Claude: {text}");
                     bool truncated = stop == "max_tokens";
                     if (truncated) text += "\n\n(My answer was cut off. Ask me to continue.)";
                     return new ChatTurnResult(text, false, truncated, cost, cacheRead);
@@ -259,9 +276,16 @@ public sealed class ClaudeChatService : IChatService
         })
         .ToList();
 
-    private List<BetaContentBlockParam> BuildOwnerContent(string ownerText)
+    private List<BetaContentBlockParam> BuildOwnerContent(string ownerText, IReadOnlyList<ReceiptFile> attachments)
     {
         var content = new List<BetaContentBlockParam>();
+        // Receipts go first (before the text that refers to them), each with a short label.
+        for (int i = 0; i < attachments.Count; i++)
+        {
+            var a = attachments[i];
+            content.Add(new BetaTextBlockParam { Text = $"[receipt attached] {a.FileName} (page {i + 1} of {attachments.Count})" });
+            content.Add(AttachmentBlock(a));
+        }
         lock (_notes)
         {
             if (_notes.Count > 0)
@@ -272,6 +296,27 @@ public sealed class ClaudeChatService : IChatService
         }
         content.Add(new BetaTextBlockParam { Text = ownerText });
         return content;
+    }
+
+    internal static BetaContentBlockParam AttachmentBlock(ReceiptFile a)
+    {
+        var data = Convert.ToBase64String(a.Data);
+        if (a.Kind == ReceiptKind.Pdf)
+            return new BetaRequestDocumentBlock { Source = new BetaBase64PdfSource { Data = data }, Title = a.FileName };
+        return new BetaImageBlockParam
+        {
+            Source = new BetaBase64ImageSource
+            {
+                Data = data,
+                MediaType = a.MediaType switch
+                {
+                    "image/png" => MediaType.ImagePng,
+                    "image/gif" => MediaType.ImageGif,
+                    "image/webp" => MediaType.ImageWebP,
+                    _ => MediaType.ImageJpeg,
+                },
+            },
+        };
     }
 
     /// <summary>
@@ -329,6 +374,8 @@ public sealed class ClaudeChatService : IChatService
             ChatTools.RunDryRun => "Running a dry run in eStream (don't touch the mouse or keyboard)…",
             ChatTools.StockCountPreview => "Comparing counts with eStream…",
             ChatTools.CreateStockSheet => "Asking you to confirm a new stock sheet…",
+            ChatTools.ShowReceiptLines => "Matching the receipt lines to eStream items…",
+            ChatTools.PriceReceiptLines => "Working out prices for the receipt…",
             _ => "Working…",
         };
     }

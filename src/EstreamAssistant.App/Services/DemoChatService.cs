@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using EstreamAssistant.Core.Claude;
+using EstreamAssistant.Core.Receipts;
 using EstreamAssistant.Core.Upc;
 
 namespace EstreamAssistant.App.Services;
@@ -18,14 +19,51 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
     public void Reset() { }
     public Task TestConnectionAsync(CancellationToken ct) => Task.CompletedTask;
 
-    public async Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct)
+    public Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct) =>
+        SendAsync(ownerText, [], progress, ct);
+
+    private bool _receiptRead;
+
+    public async Task<ChatTurnResult> SendAsync(string ownerText, IReadOnlyList<ReceiptFile> attachments, IProgress<ChatEvent>? progress, CancellationToken ct)
     {
         await Task.Delay(500, ct);
         var text = ownerText.Trim();
         var digits = text.Split('.', ',')[0].Trim();
         string reply;
 
-        if (UpcNormalizer.LooksLikeUpc(digits) || text.Contains("UPC", StringComparison.OrdinalIgnoreCase))
+        if (attachments.Count > 0)
+        {
+            // A made-up reading of a sample invoice (it doesn't look at the picture).
+            progress?.Report(new ChatEvent.ToolStarted(ChatTools.ShowReceiptLines, "Matching the receipt lines to eStream items…"));
+            await Task.Delay(600, ct);
+            await tools.ExecuteAsync(ChatTools.ShowReceiptLines, Args(new
+            {
+                source = "Sample invoice (demo)",
+                lines = new object[]
+                {
+                    Line(1, "LAYS ALL DRESSED 220G", "060410079591", 2, 55.20m, null, 110.40m),
+                    Line(2, "LAYS CUCUMBER", null, 1, 55.20m, null, 55.20m),
+                    Line(3, "COKE 2L 8PK", "67000000409", 3, 21.60m, null, 64.80m),
+                    Line(4, "DORITOS NACHO CHS 235G", "28400090360", 1, 54.40m, null, 45.40m),
+                    Line(5, "KRAFT DINNER ORIG", null, 2, 14.40m, null, 28.80m),
+                    new { line = 6, text = "HEINZ KETCH?? 1L", code = (string?)null, qty = (decimal?)null, case_price = (decimal?)null,
+                          unit_price = (decimal?)null, line_total = (decimal?)null, readable = false, upc = (string?)null, note = "Price is smudged." },
+                },
+            }), ct);
+            _receiptRead = true;
+            reply = "I read 6 lines from the invoice. 3 are matched and ready, line 4's quantity × price doesn't match its total, " +
+                    "line 2 could be more than one item (pick it in the receipt table), and line 6 is unreadable, so check it on the paper.\n\n" +
+                    "Tell me the markup you want, e.g. \"30% markup on the chips\".\n\n(Demo reply: no API key used.)";
+        }
+        else if (_receiptRead && text.Contains("markup", StringComparison.OrdinalIgnoreCase))
+        {
+            progress?.Report(new ChatEvent.ToolStarted(ChatTools.PriceReceiptLines, "Working out prices for the receipt…"));
+            await Task.Delay(400, ct);
+            await tools.ExecuteAsync(ChatTools.PriceReceiptLines, Args(new { lines = new[] { 1, 2, 4 }, mode = "markup", pct = 30, apply_endings = true }), ct);
+            reply = "With a 30% markup the chips come out as shown in the receipt table. Tick the lines you want and press Add to pending, " +
+                    "or tell me and I'll add them.\n\n(Demo reply.)";
+        }
+        else if (UpcNormalizer.LooksLikeUpc(digits) || text.Contains("UPC", StringComparison.OrdinalIgnoreCase))
         {
             int at = text.IndexOf("UPC", StringComparison.OrdinalIgnoreCase);
             var upc = at >= 0 ? text[(at + 3)..].Split(',')[0].Trim() : digits;
@@ -65,6 +103,11 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
         }
         return new ChatTurnResult(reply, false, false, 0, 0);
     }
+
+    private static object Line(int line, string text, string? code, decimal qty, decimal casePrice, decimal? unitPrice, decimal total) => new
+    {
+        line, text, code, qty, case_price = casePrice, unit_price = unitPrice, line_total = total, readable = true, upc = (string?)null, note = (string?)null,
+    };
 
     private static Dictionary<string, JsonElement> Args(object o) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(o))!;

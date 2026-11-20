@@ -55,5 +55,9 @@ public sealed partial class FeedMessage : ObservableObject
     private IReadOnlyList<FeedChoice> _choices;
 
     public bool HasChoices => Choices.Count > 0;
+
+    /// <summary>Receipts sent with an owner message (shown as thumbnails).</summary>
+    public IReadOnlyList<AttachmentViewModel> Attachments { get; init; } = [];
+    public bool HasAttachments => Attachments.Count > 0;
     public bool HasStatus => Status.Length > 0;
 }

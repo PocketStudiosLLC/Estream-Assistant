@@ -46,6 +46,12 @@ public sealed class AppSettings
     // Claude
     public string Model { get; set; } = "claude-opus-5-5";
     public string Effort { get; set; } = "low";
+    /// <summary>Spec 7.4: after this many messages in one chat, suggest a new chat to keep costs down. 0 = never.</summary>
+    public int LongChatTurns { get; set; } = 60;
+    /// <summary>US$ per million tokens, per model, when they differ from the built-in table (spec 7.1).</summary>
+    public Dictionary<string, Claude.ModelPrice> ModelPrices { get; set; } = [];
+    /// <summary>Spec 11: also log the text of chat messages (off by default; tool calls are always logged).</summary>
+    public bool DebugLogging { get; set; }
 
     // Pricing
     public PricingMode DefaultPricingMode { get; set; } = PricingMode.Markup;

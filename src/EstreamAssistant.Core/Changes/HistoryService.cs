@@ -1,5 +1,11 @@
 namespace EstreamAssistant.Core.Changes;
 
+/// <summary>History tab date filter (F7.1).</summary>
+public enum HistoryPeriod { AnyTime, Today, Last7Days, Last30Days }
+
+/// <summary>History tab status filter (F7.1).</summary>
+public enum HistoryStatusFilter { All, AllOk, Problems }
+
 /// <summary>One past run: a results CSV from Done\ (spec F7.1), or a save that never finished.</summary>
 public sealed record HistoryRun(string Name, string? Path, DateTime Time, bool IsDryRun, IReadOnlyList<EngineResult> Rows, string? Problem = null)
 {
@@ -16,6 +22,23 @@ public sealed record HistoryRun(string Name, string? Path, DateTime Time, bool I
         : IsDryRun
             ? $"{Ok} OK, {Skipped} skipped, {Failed} failed"
             : $"{Ok} applied, {Unverified} unverified, {Failed} failed, {Skipped} skipped";
+
+    public bool IsAllOk => !IsInterrupted && Rows.Count > 0 && Ok == Rows.Count;
+
+    public bool InPeriod(HistoryPeriod period, DateTime now) => period switch
+    {
+        HistoryPeriod.Today => Time.Date == now.Date,
+        HistoryPeriod.Last7Days => Time.Date > now.Date.AddDays(-7),
+        HistoryPeriod.Last30Days => Time.Date > now.Date.AddDays(-30),
+        _ => true,
+    };
+
+    public bool HasStatus(HistoryStatusFilter status) => status switch
+    {
+        HistoryStatusFilter.AllOk => IsAllOk,
+        HistoryStatusFilter.Problems => !IsAllOk,
+        _ => true,
+    };
 
     /// <summary>Free-text filter over the file name, UPCs, descriptions, statuses and messages (F7.1).</summary>
     public bool Matches(string filter)

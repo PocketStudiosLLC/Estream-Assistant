@@ -40,17 +40,25 @@ public sealed class UsageTracker
     private readonly object _gate = new();
     private readonly Dictionary<string, DayTotal> _days;
 
-    public UsageTracker(string? path = null)
+    private readonly Func<string, ModelPrice?>? _priceOverride;
+
+    /// <param name="priceOverride">Prices from Settings, when set for a model (spec 7.1).</param>
+    public UsageTracker(string? path = null, Func<string, ModelPrice?>? priceOverride = null)
     {
         _path = path;
+        _priceOverride = priceOverride;
         _days = Load(path);
     }
 
+    /// <summary>The prices used for a model: Settings first, then the built-in table.</summary>
+    public ModelPrice PriceFor(string model) =>
+        _priceOverride?.Invoke(model) ?? Prices.GetValueOrDefault(model) ?? Prices["claude-opus-5-5"];
+
     public event EventHandler? Changed;
 
-    public static decimal Cost(string model, UsageSample u)
+    public static decimal Cost(string model, UsageSample u, ModelPrice? price = null)
     {
-        var p = Prices.GetValueOrDefault(model) ?? Prices["claude-opus-5-5"];
+        var p = price ?? Prices.GetValueOrDefault(model) ?? Prices["claude-opus-5-5"];
         return (u.InputTokens * p.InputPerMTok
               + u.OutputTokens * p.OutputPerMTok
               + u.CacheReadTokens * p.CacheReadPerMTok
@@ -59,7 +67,7 @@ public sealed class UsageTracker
 
     public decimal Record(string model, UsageSample u, DateTime? when = null)
     {
-        var cost = Cost(model, u);
+        var cost = Cost(model, u, PriceFor(model));
         var key = (when ?? DateTime.Now).ToString("yyyy-MM-dd");
         lock (_gate)
         {
@@ -81,6 +89,26 @@ public sealed class UsageTracker
     public DayTotal Day(DateTime day)
     {
         lock (_gate) return _days.GetValueOrDefault(day.ToString("yyyy-MM-dd")) ?? new DayTotal();
+    }
+
+    /// <summary>All the days of one month added up.</summary>
+    public DayTotal Month(DateTime anyDayInMonth)
+    {
+        var prefix = anyDayInMonth.ToString("yyyy-MM-");
+        var t = new DayTotal();
+        lock (_gate)
+        {
+            foreach (var d in _days.Where(kv => kv.Key.StartsWith(prefix, StringComparison.Ordinal)).Select(kv => kv.Value))
+            {
+                t.InputTokens += d.InputTokens;
+                t.OutputTokens += d.OutputTokens;
+                t.CacheReadTokens += d.CacheReadTokens;
+                t.CacheWriteTokens += d.CacheWriteTokens;
+                t.CostUsd += d.CostUsd;
+                t.Requests += d.Requests;
+            }
+        }
+        return t;
     }
 
     public decimal MonthCost(DateTime anyDayInMonth)

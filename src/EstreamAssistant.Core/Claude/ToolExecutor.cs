@@ -28,14 +28,17 @@ public sealed class ToolExecutor
     private readonly AppSettings _settings;
     private readonly PendingChanges? _pending;
     private readonly Counts.StockCounts? _counts;
+    private readonly Receipts.ReceiptSession? _receipt;
     private CodeTables? _codes;
 
-    public ToolExecutor(ItemLookupService lookup, AppSettings settings, PendingChanges? pending = null, Counts.StockCounts? counts = null)
+    public ToolExecutor(ItemLookupService lookup, AppSettings settings, PendingChanges? pending = null, Counts.StockCounts? counts = null,
+        Receipts.ReceiptSession? receipt = null)
     {
         _lookup = lookup;
         _settings = settings;
         _pending = pending;
         _counts = counts;
+        _receipt = receipt;
     }
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -54,6 +57,8 @@ public sealed class ToolExecutor
                 ChatTools.RunDryRun => await RunDryRunAsync(ct).ConfigureAwait(false),
                 ChatTools.StockCountPreview => await StockCountPreviewAsync(input, ct).ConfigureAwait(false),
                 ChatTools.CreateStockSheet => await CreateStockSheetAsync(input, ct).ConfigureAwait(false),
+                ChatTools.ShowReceiptLines => await ShowReceiptLinesAsync(input, ct).ConfigureAwait(false),
+                ChatTools.PriceReceiptLines => PriceReceiptLines(input),
                 _ => ToolOutcome.Error($"Unknown tool '{name}'. Only {string.Join(", ", ChatTools.All.Select(t => t.Name))} exist."),
             };
         }
@@ -298,6 +303,116 @@ public sealed class ToolExecutor
                 : "Explain what happened in plain words.",
         }, Json), false);
     }
+
+    private async Task<ToolOutcome> ShowReceiptLinesAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_receipt is null) throw new ToolInputException("Receipts aren't available.");
+        var source = Clip(GetString(input, "source", 200).Trim(), 60);
+        var rows = Get(input, "lines");
+        if (rows.ValueKind != JsonValueKind.Array) throw new ToolInputException("'lines' must be a list.");
+        if (rows.GetArrayLength() is 0 or > Receipts.ReceiptSession.MaxLines)
+            throw new ToolInputException($"Send 1 to {Receipts.ReceiptSession.MaxLines} lines.");
+        var inputs = new List<Receipts.ReceiptLineInput>();
+        var seen = new HashSet<int>();
+        foreach (var r in rows.EnumerateArray())
+        {
+            if (r.ValueKind != JsonValueKind.Object) throw new ToolInputException("Each line must be an object.");
+            var d = r.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+            var line = GetInt(d, "line");
+            if (line is < 1 or > 999) throw new ToolInputException("line must be 1 to 999.");
+            if (!seen.Add(line)) throw new ToolInputException($"Line {line} is in the list twice.");
+            var upc = NullableString(d, "upc", 40);
+            if (upc is not null && !UpcNormalizer.LooksLikeUpc(upc)) throw new ToolInputException($"upc '{upc}' on line {line} isn't a UPC.");
+            decimal? Money(string key)
+            {
+                var v = NullableDecimal(d, key);
+                if (v is < 0 or > 100_000) throw new ToolInputException($"{key} on line {line} isn't a sensible amount.");
+                return v;
+            }
+            var qty = NullableDecimal(d, "qty");
+            if (qty is < 0 or > 100_000) throw new ToolInputException($"qty on line {line} isn't valid.");
+            inputs.Add(new Receipts.ReceiptLineInput
+            {
+                Line = line,
+                Text = Clip(GetString(d, "text", 300).Trim(), 120),
+                Code = NullableString(d, "code", 40)?.Trim(),
+                Qty = qty,
+                CasePrice = Money("case_price"),
+                UnitPrice = Money("unit_price"),
+                LineTotal = Money("line_total"),
+                Readable = GetBool(d, "readable"),
+                Upc = upc,
+                Note = NullableString(d, "note", 300) is { } n ? Clip(n, 160) : null,
+            });
+        }
+
+        var lines = await _receipt.SetLinesAsync(source, inputs, ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            lines = lines.Select(ReceiptLineJson),
+            next = "The table is on the owner's screen. Tell them briefly what was matched and what needs them " +
+                   "(unreadable lines, items to pick as a numbered list, warnings). Don't stage anything until they say what to do.",
+        }, Json), false);
+    }
+
+    private ToolOutcome PriceReceiptLines(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        if (_receipt is null) throw new ToolInputException("Receipts aren't available.");
+        if (!_receipt.IsOpen) throw new ToolInputException("No receipt is open. Use show_receipt_lines first.");
+        var arr = Get(input, "lines");
+        if (arr.ValueKind != JsonValueKind.Array) throw new ToolInputException("'lines' must be a list of line numbers.");
+        var numbers = arr.EnumerateArray()
+            .Select(e => e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out var i) ? i : throw new ToolInputException("Line numbers must be whole numbers."))
+            .ToHashSet();
+        var pct = GetDecimal(input, "pct");
+        var mode = GetString(input, "mode", 10) switch
+        {
+            "markup" => PricingMode.Markup,
+            "margin" => PricingMode.Margin,
+            _ => throw new ToolInputException("mode must be 'markup' or 'margin'."),
+        };
+        if (mode == PricingMode.Margin && pct is < 0 or >= 100) throw new ToolInputException("margin pct must be 0 to 99.99.");
+        if (mode == PricingMode.Markup && pct is <= -100 or > 1000) throw new ToolInputException("markup pct must be above -100 and at most 1000.");
+        var rule = new Receipts.PriceRule(mode, pct, GetBool(input, "apply_endings"));
+        var priced = _receipt.ApplyPriceRule(numbers, rule);
+        var missing = numbers.Except(priced.Select(p => p.Number)).Order().ToList();
+        return new(JsonSerializer.Serialize(new
+        {
+            rule = rule.Text,
+            lines = priced.Select(ReceiptLineJson),
+            not_priced = missing,
+            not_priced_reason = missing.Count > 0 ? "Those lines have no matched item or no cost yet." : null,
+            next = "Tell the owner each price as Now -> New. Stage with stage_changes (price, and case_cost from new_case_cost) only when they agree.",
+        }, Json), false);
+    }
+
+    private static object ReceiptLineJson(Receipts.ReceiptLine l) => new
+    {
+        line = l.Number,
+        text = l.Input.Text,
+        status = l.Status.ToString(),
+        upc = l.Item?.Upc.ToString(CultureInfo.InvariantCulture),
+        description = l.Item?.Description,
+        matched_by = l.MatchedBy.Length > 0 ? l.MatchedBy : null,
+        candidates = l.Candidates.Count > 0 && l.Status == Receipts.ReceiptLineStatus.NeedsChoice
+            ? l.Candidates.Select(c => new { upc = c.Upc.ToString(CultureInfo.InvariantCulture), description = c.Description, match_pct = c.MatchPct })
+            : null,
+        current_price = l.Item?.Price,
+        @for = l.Item?.For,
+        current_case_cost = l.Item?.CaseCost,
+        current_unit_cost = l.Item?.UnitCost,
+        new_unit_cost = l.UnitCost,
+        new_case_cost = l.NewCaseCost,
+        cost_math = l.CostMath.Length > 0 ? l.CostMath : null,
+        cost_change_pct = l.CostChangePct,
+        gm_pct_at_current_price = l.GmAtCurrentPrice,
+        proposed_price = l.ProposedPrice,
+        proposed_gm_pct = l.ProposedGm,
+        warnings = l.Warnings.Count > 0 ? l.Warnings : null,
+    };
+
+    private static string? NullableString(IReadOnlyDictionary<string, JsonElement> d, string key, int maxLength) =>
+        d.TryGetValue(key, out var v) && v.ValueKind != JsonValueKind.Null ? GetString(d, key, maxLength) : null;
 
     private static decimal? NullableDecimal(IReadOnlyDictionary<string, JsonElement> d, string key) =>
         d.TryGetValue(key, out var v) && v.ValueKind != JsonValueKind.Null ? GetDecimal(d, key) : null;

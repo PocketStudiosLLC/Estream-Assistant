@@ -4,7 +4,9 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Windows.Media.Imaging;
 using EstreamAssistant.App.ViewModels;
+using EstreamAssistant.Core.Receipts;
 using EstreamAssistant.Core.Scanning;
 using EstreamAssistant.Core.Settings;
 
@@ -54,6 +56,21 @@ public partial class MainWindow : Window
             };
             counts.FocusCountRequested += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Input, () => { CountBox.Focus(); CountBox.SelectAll(); });
         }
+        // Receipts (spec F5.1): drag/drop anywhere on the window, Ctrl+V, and the 📎 button.
+        vm.PickReceiptFiles = () =>
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Receipts (photos, PDF)|*.jpg;*.jpeg;*.png;*.webp;*.gif;*.pdf|All files|*.*",
+                Title = "Add a receipt or invoice",
+                Multiselect = true,
+            };
+            return dlg.ShowDialog(this) == true ? dlg.FileNames : [];
+        };
+        DragEnter += OnDragOver;
+        DragOver += OnDragOver;
+        DragLeave += (_, _) => DropText.Text = DropHint;
+        Drop += OnDrop;
         vm.Confirm = (title, text) =>
             MessageBox.Show(this, text, title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
         vm.Feed.CollectionChanged += OnFeedChanged;
@@ -72,6 +89,62 @@ public partial class MainWindow : Window
         Closed += (_, _) => _eStreamTimer.Stop();
     }
 
+    private const string DropHint = "Drop a receipt photo or PDF here, or paste it (Ctrl+V)";
+
+    private static string[] DroppedReceipts(IDataObject data) =>
+        data.GetDataPresent(DataFormats.FileDrop) && data.GetData(DataFormats.FileDrop) is string[] files
+            ? files.Where(ReceiptIngest.HasAcceptedExtension).ToArray()
+            : [];
+
+    private void OnDragOver(object sender, DragEventArgs e)
+    {
+        bool ok = !_vm.IsWorking && DroppedReceipts(e.Data).Length > 0;
+        e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
+        DropText.Text = ok ? "Let go to add the receipt (it's sent when you press Send)" : DropHint;
+        e.Handled = true;
+    }
+
+    private async void OnDrop(object sender, DragEventArgs e)
+    {
+        DropText.Text = DropHint;
+        e.Handled = true;
+        if (_vm.IsWorking) return;
+        var files = DroppedReceipts(e.Data);
+        if (files.Length == 0) return;
+        Tabs.SelectedIndex = 0;
+        await _vm.AttachPathsAsync(files, ReceiptOrigin.File);
+    }
+
+    /// <summary>Ctrl+V with a picture or a copied receipt file. Text pastes into a text box as usual.</summary>
+    private bool TryPasteReceipt()
+    {
+        try
+        {
+            if (Clipboard.ContainsText() && Keyboard.FocusedElement is TextBox) return false;
+            if (Clipboard.ContainsFileDropList())
+            {
+                var files = Clipboard.GetFileDropList().Cast<string>().Where(ReceiptIngest.HasAcceptedExtension).ToArray();
+                if (files.Length == 0) return false;
+                _ = _vm.AttachPathsAsync(files, ReceiptOrigin.File);
+                return true;
+            }
+            if (Clipboard.ContainsImage() && Clipboard.GetImage() is BitmapSource img)
+            {
+                var enc = new PngBitmapEncoder();
+                enc.Frames.Add(BitmapFrame.Create(img));
+                using var ms = new MemoryStream();
+                enc.Save(ms);
+                _vm.AttachPasted(ms.ToArray());
+                return true;
+            }
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            // The clipboard is busy (another app has it open): let the normal paste happen.
+        }
+        return false;
+    }
+
     private void OnPreviewTextInput(object sender, TextCompositionEventArgs e)
     {
         if (_vm.IsWorking) { e.Handled = true; return; } // S8: ignore our own input while the engine works
@@ -83,6 +156,12 @@ public partial class MainWindow : Window
     {
         if (_vm.IsWorking) { e.Handled = true; _scanner.Reset(); return; }
         if (e.Key == Key.Escape && _vm.IsChatBusy) { _vm.StopChatCommand.Execute(null); e.Handled = true; return; }
+        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control && Tabs.SelectedIndex == 0
+            && Keyboard.FocusedElement is not PasswordBox && TryPasteReceipt())
+        {
+            e.Handled = true;
+            return;
+        }
         if (e.Key != Key.Enter && e.Key != Key.Return) return;
         if (Keyboard.FocusedElement is PasswordBox) { _scanner.Reset(); return; }
 

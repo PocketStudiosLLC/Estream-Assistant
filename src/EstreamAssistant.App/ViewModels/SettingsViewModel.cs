@@ -1,6 +1,7 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using EstreamAssistant.Core.Claude;
 using EstreamAssistant.Core.Logging;
 using EstreamAssistant.Core.Pricing;
 using EstreamAssistant.Core.Settings;
@@ -21,6 +22,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _secrets = secrets;
         _log = log;
         LoadFrom(settings);
+        RememberScannerDigits();
         RefreshKeyDisplay();
     }
 
@@ -59,6 +61,48 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _scanMaxInterKeyMs = "";
     [ObservableProperty] private string _scanListWindowSeconds = "";
     [ObservableProperty] private string _protectedSheets = "";
+    [ObservableProperty] private string _protectedBatches = "";
+    [ObservableProperty] private string _scanMinDigits = "";
+    [ObservableProperty] private string _scanMaxDigits = "";
+    [ObservableProperty] private string _longChatTurns = "";
+    [ObservableProperty] private bool _debugLogging;
+    [ObservableProperty] private string _priceIn = "";
+    [ObservableProperty] private string _priceOut = "";
+    [ObservableProperty] private string _priceCacheRead = "";
+    /// <summary>Spec 6.8: today's and this month's tokens and estimated cost (filled in by the main view model).</summary>
+    [ObservableProperty] private string _usageDetail = "";
+
+    public string PricesLabel => $"Prices for {Model.Trim()} (US$ per million tokens)";
+
+    partial void OnModelChanged(string value)
+    {
+        OnPropertyChanged(nameof(PricesLabel));
+        LoadPrices(value.Trim());
+    }
+
+    private void LoadPrices(string model)
+    {
+        var p = _settings.ModelPrices.GetValueOrDefault(model) ?? UsageTracker.Prices.GetValueOrDefault(model) ?? UsageTracker.Prices["claude-opus-5-5"];
+        PriceIn = p.InputPerMTok.ToString("0.00##", CultureInfo.InvariantCulture);
+        PriceOut = p.OutputPerMTok.ToString("0.00##", CultureInfo.InvariantCulture);
+        PriceCacheRead = p.CacheReadPerMTok.ToString("0.00##", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Spec 8.3: opens Power Automate Desktop so the owner can run the "Estream" flow by hand.</summary>
+    [RelayCommand]
+    private void OpenPadFlow()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-powerautomate:") { UseShellExecute = true });
+            StatusMessage = "Opening Power Automate Desktop. Run the \"Estream\" flow from its list.";
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Opening Power Automate Desktop failed", ex);
+            StatusMessage = "Couldn't open Power Automate Desktop. Is it installed?";
+        }
+    }
 
     [ObservableProperty] private string _apiKeyDisplay = "";
     [ObservableProperty] private string _statusMessage = "";
@@ -80,6 +124,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         ScanMaxInterKeyMs = s.ScanMaxInterKeyMs.ToString(CultureInfo.InvariantCulture);
         ScanListWindowSeconds = s.ScanListWindowSeconds.ToString(CultureInfo.InvariantCulture);
         ProtectedSheets = string.Join(", ", s.ProtectedSheets);
+        ProtectedBatches = string.Join(", ", s.ProtectedBatches);
+        ScanMinDigits = s.ScanMinDigits.ToString(CultureInfo.InvariantCulture);
+        ScanMaxDigits = s.ScanMaxDigits.ToString(CultureInfo.InvariantCulture);
+        LongChatTurns = s.LongChatTurns.ToString(CultureInfo.InvariantCulture);
+        DebugLogging = s.DebugLogging;
+        LoadPrices(s.Model);
     }
 
     private static bool TryParseNumbers(string text, out List<int> numbers)
@@ -107,6 +157,15 @@ public sealed partial class SettingsViewModel : ObservableObject
         { StatusMessage = "Scan list window must be between 1 and 600 seconds."; return; }
         if (!TryParseNumbers(ProtectedSheets, out var protectedSheets))
         { StatusMessage = "Protected sheets must be sheet numbers separated by commas, e.g. 10001, 10002."; return; }
+        if (!TryParseNumbers(ProtectedBatches, out var protectedBatches))
+        { StatusMessage = "Protected price batches must be batch numbers separated by commas."; return; }
+        if (!int.TryParse(ScanMinDigits, out var minDigits) || !int.TryParse(ScanMaxDigits, out var maxDigits)
+            || minDigits < 4 || maxDigits > 20 || minDigits > maxDigits)
+        { StatusMessage = "Barcode digits: min and max between 4 and 20, min not more than max (default 6 and 14)."; return; }
+        if (!int.TryParse(LongChatTurns, out var longChat) || longChat is < 0 or > 1000)
+        { StatusMessage = "Long chat must be a number of messages, e.g. 60 (0 = never suggest a new chat)."; return; }
+        if (!Money(PriceIn, out var pIn) || !Money(PriceOut, out var pOut) || !Money(PriceCacheRead, out var pCache))
+        { StatusMessage = "Claude prices must be dollar amounts per million tokens, e.g. 4.00."; return; }
 
         bool restartNeeded = _settings.DataSource != DataSource
             || _settings.ConnectionString != ConnectionString.Trim()
@@ -127,13 +186,22 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.ScanMaxInterKeyMs = gap;
         _settings.ScanListWindowSeconds = window;
         _settings.ProtectedSheets = protectedSheets;
+        _settings.ProtectedBatches = protectedBatches;
+        _settings.ScanMinDigits = minDigits;
+        _settings.ScanMaxDigits = maxDigits;
+        _settings.LongChatTurns = longChat;
+        _settings.DebugLogging = DebugLogging;
+        var price = new ModelPrice(pIn, pOut, pCache);
+        if (UsageTracker.Prices.GetValueOrDefault(_settings.Model) == price) _settings.ModelPrices.Remove(_settings.Model);
+        else _settings.ModelPrices[_settings.Model] = price;
+        restartNeeded |= minDigits != _scannerMin || maxDigits != _scannerMax;
 
         try
         {
             _settings.Save(_paths.SettingsFile);
             _log.Info("Settings saved.");
             StatusMessage = restartNeeded
-                ? "Saved. Close and reopen the app to use the new data source or engine."
+                ? "Saved. Close and reopen the app to use the new data source, engine or scanner digits."
                 : "Saved.";
         }
         catch (IOException ex)
@@ -170,6 +238,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(HasApiKey));
         ApiKeyChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    private int _scannerMin = -1, _scannerMax = -1;
+
+    /// <summary>The scanner settings the window started with (they apply after a restart).</summary>
+    public void RememberScannerDigits() => (_scannerMin, _scannerMax) = (_settings.ScanMinDigits, _settings.ScanMaxDigits);
+
+    private static bool Money(string s, out decimal d) =>
+        decimal.TryParse(s.Replace("$", "").Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out d) && d is >= 0 and < 1000;
 
     internal static bool TryParseEndings(string text, out List<int> endings)
     {

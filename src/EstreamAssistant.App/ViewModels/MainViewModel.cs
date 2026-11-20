@@ -235,8 +235,18 @@ public sealed partial class MainViewModel : ObservableObject
     private void StartEdit()
     {
         if (CurrentItem is null) return;
-        Edit = CurrentItem.Item.Inactive ? null : new ItemEditViewModel(CurrentItem.Item, _settings);
+        Edit = CurrentItem.Item.Inactive ? null : new ItemEditViewModel(CurrentItem.Item, _settings,
+            _pending.Rows.FirstOrDefault(r => r.Upc == CurrentItem.Item.Upc)?.Request);
         if (Edit is null) Add(FeedKind.App, "This item is inactive, so it can't be changed.");
+    }
+
+    /// <summary>U5: change the New values of a pending row (opens the item card's form with them filled in).</summary>
+    [RelayCommand]
+    private async Task EditPending(PendingRowViewModel? row)
+    {
+        if (row is null || IsWorking) return;
+        await LookupUpcAsync(row.UpcText, fromScan: false);
+        if (CurrentItem?.Item.Upc == row.Upc) StartEdit();
     }
 
     [RelayCommand]
@@ -251,6 +261,8 @@ public sealed partial class MainViewModel : ObservableObject
         if (Edit is null) return;
         var (req, error) = Edit.ToRequest();
         if (req is null) { Edit.Message = error ?? ""; return; }
+        // Editing an item that's already pending replaces its row (a field set back to Now drops out).
+        if (Edit.EditsPending) _pending.Remove(Edit.Item.Upc);
         var outcome = (await _pending.StageAsync([req]))[0];
         if (outcome.Staged)
         {
@@ -286,7 +298,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string _usageText = "";
 
-    public string ChatPlaceholder => IsChatBusy ? "Claude is working… (Esc or Stop to cancel)" : "Ask Claude, e.g. \"what's the price of lays cucumber?\"";
+    public string ChatPlaceholder => IsChatBusy ? "Claude is working… (Esc or Stop to cancel)"
+        : HasAttachments ? "Press Send to read the receipt, or say what to do, e.g. \"30% markup on the chips\""
+        : "Ask Claude, e.g. \"what's the price of lays cucumber?\"";
 
     public SettingsViewModel Settings { get; }
     public HistoryViewModel? History { get; init; }
@@ -312,7 +326,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     public string DataSourceName => _lookup.Repository.SourceName;
     /// <summary>Hidden while the item card's change form is open, to leave room for the pending list.</summary>
-    public bool HasScanList => ScanList.Count > 0 && Edit is null;
+    public bool HasScanList => ScanList.Count > 0 && Edit is null && !ShowReceipt;
 
     public async Task InitializeAsync()
     {
@@ -363,6 +377,11 @@ public sealed partial class MainViewModel : ObservableObject
         UsageText = today.Requests == 0
             ? "Claude cost today: $0.00"
             : $"Claude cost today: ~${today.CostUsd:0.00} ({today.Requests} requests) · this month ~${_usage.MonthCost(DateTime.Now):0.00}";
+        var month = _usage.Month(DateTime.Now);
+        static string Tok(long n) => n >= 1_000_000 ? $"{n / 1_000_000d:0.0}M" : n >= 1000 ? $"{n / 1000d:0.#}k" : n.ToString(CultureInfo.InvariantCulture);
+        static string Line(string label, UsageTracker.DayTotal d) =>
+            $"{label}: {d.Requests} requests, {Tok(d.InputTokens)} in, {Tok(d.OutputTokens)} out, {Tok(d.CacheReadTokens)} cache read, ~${d.CostUsd:0.00}";
+        Settings.UsageDetail = Line("Today", today) + "\n" + Line("This month", month);
     }
 
     private async Task TestClaudeAsync()
@@ -385,14 +404,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ------------------------------------------------------------- Claude chat
 
-    private bool CanSendChat() => !IsChatBusy && ChatText.Trim().Length > 0;
+    private bool CanSendChat() => !IsChatBusy && (ChatText.Trim().Length > 0 || HasAttachments);
 
     [RelayCommand(CanExecute = nameof(CanSendChat))]
     private Task SendChat()
     {
         var text = ChatText.Trim();
         ChatText = "";
-        return AskClaudeAsync(text, text);
+        var files = Attachments.ToList();
+        if (files.Count > 0 && text.Length == 0) text = files.Count == 1 ? "Read this receipt." : $"Read this receipt ({files.Count} pages).";
+        Attachments.Clear();
+        return AskClaudeAsync(text, text, files);
     }
 
     [RelayCommand]
@@ -404,17 +426,47 @@ public sealed partial class MainViewModel : ObservableObject
         _chatCts?.Cancel();
         _chat.Reset();
         _activeChoices = [];
-        Add(FeedKind.App, "Started a new chat. Claude has forgotten the earlier messages.");
+        _chatTurns = 0;
+        _longChatOffered = false;
+        RetryText = null;
+        Add(FeedKind.App, "Started a new chat. Claude has forgotten the earlier messages." +
+            (HasReceipt ? " The receipt table stays open; attach the receipt again if Claude needs to read it." : ""));
         FocusChatBoxRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private async Task AskClaudeAsync(string shownText, string sentText)
+    // Spec 7.4: suggest a new chat once a chat gets long (every request re-sends the whole chat).
+    private int _chatTurns;
+    private bool _longChatOffered;
+
+    /// <summary>Spec 10: the last message that failed to send, for the Retry button.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRetry))]
+    private string? _retryText;
+    private IReadOnlyList<AttachmentViewModel> _retryFiles = [];
+    public bool CanRetry => RetryText is not null && !IsChatBusy;
+
+    partial void OnIsChatBusyChanged(bool value) => OnPropertyChanged(nameof(CanRetry));
+
+    [RelayCommand]
+    private Task RetryChat()
+    {
+        if (RetryText is not { } text || IsChatBusy) return Task.CompletedTask;
+        var files = _retryFiles.Where(Attachments.Contains).ToList();
+        foreach (var f in files) Attachments.Remove(f);
+        RetryText = null;
+        return AskClaudeAsync(text, text, files);
+    }
+
+    private async Task AskClaudeAsync(string shownText, string sentText, IReadOnlyList<AttachmentViewModel>? files = null)
     {
         if (IsChatBusy) return;
-        Add(FeedKind.Owner, shownText);
+        files ??= [];
+        RetryText = null;
+        Feed.Add(new FeedMessage(FeedKind.Owner, shownText) { Attachments = files });
         if (!_chat.IsConfigured)
         {
             Add(FeedKind.Error, "Claude isn't set up yet: add an Anthropic API key in Settings. Scans and searches in the top box still work.");
+            RestoreAttachments(files);
             return;
         }
 
@@ -445,8 +497,17 @@ public sealed partial class MainViewModel : ObservableObject
 
         try
         {
-            var result = await _chat.SendAsync(sentText, progress, _chatCts.Token);
+            var result = await _chat.SendAsync(sentText, files.Select(f => f.File).ToList(), progress, _chatCts.Token);
             bubble.Status = "";
+            // Files only join the receipt when Claude read them as a receipt (a count-sheet photo doesn't).
+            if (files.Count > 0 && _receipt is { IsOpen: true }) _receipt.AddFiles(files.Select(f => f.File));
+            _chatTurns++;
+            if (!_longChatOffered && _settings.LongChatTurns > 0 && _chatTurns >= _settings.LongChatTurns)
+            {
+                _longChatOffered = true;
+                Add(FeedKind.App, $"This chat has {_chatTurns} messages, so each new message costs more (Claude re-reads the whole chat). " +
+                    "If you're moving on to something else, press New chat. Pending changes stay.");
+            }
             var choices = ChoiceParser.Parse(result.Text)
                 .Select(c => new FeedChoice(c.Number, c.Label, c.Detail, ParseUpc(c.Detail), ForClaude: true))
                 .ToList();
@@ -464,11 +525,15 @@ public sealed partial class MainViewModel : ObservableObject
         {
             bubble.Status = "";
             bubble.Text = bubble.Text.Length > 0 ? bubble.Text + "\n\n(Stopped.)" : "(Stopped.)";
+            RestoreAttachments(files);
         }
         catch (ChatException ex)
         {
             Feed.Remove(bubble);
-            Add(FeedKind.Error, ex.Message);
+            Add(FeedKind.Error, ex.Message + " Press Retry to send it again.");
+            RestoreAttachments(files);
+            RetryText = sentText;
+            _retryFiles = files;
             ClaudeStatus = StatusLevel.Bad;
             ClaudeStatusText = ex.Message;
         }
@@ -479,6 +544,12 @@ public sealed partial class MainViewModel : ObservableObject
             _chatCts = null;
             FocusChatBoxRequested?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    /// <summary>A turn that didn't go through is rolled back, so its receipts go back in the tray.</summary>
+    private void RestoreAttachments(IReadOnlyList<AttachmentViewModel> files)
+    {
+        foreach (var f in files) if (!Attachments.Contains(f)) Attachments.Add(f);
     }
 
     /// <summary>Raised as Claude's reply streams in (for auto-scroll).</summary>
@@ -612,6 +683,7 @@ public sealed partial class MainViewModel : ObservableObject
             }
 
             CurrentItem = new ItemCardViewModel(r.Item, r.Note, _codes);
+            ShowReceipt = false; // a scan or search: show the item card (the receipt stays open)
             var line = $"{(fromScan ? "Scanned" : "Found")}: {r.Item.Description} ({r.Item.Upc}) {CurrentItem.PriceText}";
             if (r.Item.Inactive) line += "  [INACTIVE]";
             if (r.Note is not null) line += $"\n{r.Note}";
