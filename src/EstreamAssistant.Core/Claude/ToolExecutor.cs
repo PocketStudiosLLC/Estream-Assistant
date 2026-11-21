@@ -440,8 +440,8 @@ public sealed class ToolExecutor
     private async Task<ToolOutcome> StockSheetsAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
     {
         if (_reports is null) throw new ToolInputException("Reports aren't available.");
-        var sheet = NullableInt(input, "sheet");
-        if (sheet is null)
+        var sheet = GetInt(input, "sheet");
+        if (sheet == 0)
         {
             var list = await _reports.SheetListAsync(GetBool(input, "include_closed"), ct).ConfigureAwait(false);
             return new(JsonSerializer.Serialize(new
@@ -461,8 +461,8 @@ public sealed class ToolExecutor
             }, Json), false);
         }
 
-        if (sheet is < 1) throw new ToolInputException("sheet must be a sheet number.");
-        var r = await _reports.SheetAsync(sheet.Value, ct).ConfigureAwait(false);
+        if (sheet < 0) throw new ToolInputException("sheet must be a sheet number, or 0 to list the sheets.");
+        var r = await _reports.SheetAsync(sheet, ct).ConfigureAwait(false);
         if (r is null)
             return new(JsonSerializer.Serialize(new
             {

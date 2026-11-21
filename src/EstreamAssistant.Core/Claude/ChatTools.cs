@@ -9,6 +9,9 @@ namespace EstreamAssistant.Core.Claude;
 /// buttons can do those (spec S3). stage_changes only fills the pending list and run_dry_run
 /// only runs a dry run (eStream's Exit throws the typed values away). create_stock_sheet always
 /// shows the owner an in-app confirmation first; posting a sheet is a button only.
+/// Strict-schema limits per request (all tools together): 20 strict tools, 24 optional parameters,
+/// 16 parameters with union/nullable types. Going over makes EVERY chat request fail with a 400,
+/// so ChatToolsTests keeps a margin. Prefer a sentinel (e.g. 0) over a new nullable parameter.
 /// </summary>
 public static class ChatTools
 {
@@ -25,7 +28,9 @@ public static class ChatTools
     public const string StockReport = "stock_report";
     public const string StockSheets = "stock_sheets";
 
-    public sealed record Definition(string Name, string Description, string SchemaJson)
+    /// <param name="Strict">false for simple read-only tools: they don't count toward the strict-schema limits,
+    /// and ToolExecutor re-checks every input anyway.</param>
+    public sealed record Definition(string Name, string Description, string SchemaJson, bool Strict = true)
     {
         /// <summary>The schema as the raw dictionary the SDK's InputSchema is built from.</summary>
         public IReadOnlyDictionary<string, JsonElement> Schema =>
@@ -107,18 +112,18 @@ public static class ChatTools
                 "description":"negative: on hand below 0. zero: on hand exactly 0. below_min: a minimum is set and on hand is below it. above_max: a re-order max is set and on hand is above it."},
               "include_inactive":{"type":"boolean","description":"true to include inactive items. Use false unless the owner asks for them."}
             },"required":["filter","include_inactive"],"additionalProperties":false}
-            """),
+            """, Strict: false),
         new(StockSheets,
-            "Stock sheets in eStream, read-only. With sheet=null: lists the stock sheets (open ones first) with their cut-off date, comment " +
+            "Stock sheets in eStream, read-only. With sheet=0: lists the stock sheets (open ones first) with their cut-off date, comment " +
             "and number of items. With a sheet number: that sheet's items (system vs counted, over/short), totals, and checks to look at " +
             "before posting (items counted 0, big differences, negative system stock, a sheet that wasn't counted yet). " +
             "The full list goes to the Reports tab. This never changes or posts a sheet.",
             """
             {"type":"object","properties":{
-              "sheet":{"type":["integer","null"],"description":"The stock sheet number, or null to list the sheets."},
+              "sheet":{"type":"integer","description":"The stock sheet number, or 0 to list the sheets."},
               "include_closed":{"type":"boolean","description":"When listing: true to include closed sheets too. Ignored when a sheet number is given."}
             },"required":["sheet","include_closed"],"additionalProperties":false}
-            """),
+            """, Strict: false),
         new(StockCountPreview,
             "Stock counts: show counted vs system on-hand (over/short) for items. Changes nothing in eStream. " +
             "With add_to_list=true the counts also go into the owner's count list on the Stock counts tab " +

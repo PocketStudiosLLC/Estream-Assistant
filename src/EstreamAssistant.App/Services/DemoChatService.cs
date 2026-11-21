@@ -79,7 +79,7 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
             var number = new string(text.Where(char.IsDigit).ToArray());
             progress?.Report(new ChatEvent.ToolStarted(ChatTools.StockSheets, "Reading stock sheets…"));
             var r = await tools.ExecuteAsync(ChatTools.StockSheets,
-                Args(new { sheet = number.Length is > 0 and < 9 ? int.Parse(number, CultureInfo.InvariantCulture) : (int?)null, include_closed = true }), ct);
+                Args(new { sheet = number.Length is > 0 and < 9 ? int.Parse(number, CultureInfo.InvariantCulture) : 0, include_closed = true }), ct);
             using var d = JsonDocument.Parse(r.Json);
             var root = d.RootElement;
             reply = root.TryGetProperty("error", out var err) ? err.GetString() + "\n\n(Demo reply.)"

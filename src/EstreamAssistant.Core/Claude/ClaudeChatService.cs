@@ -296,7 +296,7 @@ public sealed class ClaudeChatService : IChatService
             Name = t.Name,
             Description = t.Description,
             InputSchema = InputSchema.FromRawUnchecked(t.Schema),
-            Strict = true,
+            Strict = t.Strict,
         })
         .ToList();
 
@@ -436,7 +436,8 @@ public sealed class ClaudeChatService : IChatService
             AnthropicRateLimitException => new("Claude is busy right now (rate limit). Wait a minute and try again.", ex),
             AnthropicOverloadedException or Anthropic5xxException or AnthropicServiceUnavailableException =>
                 new("Claude's service is having trouble right now. Try again in a minute.", ex),
-            AnthropicBadRequestException => new("Claude couldn't read that request. Start a new chat and try again.", ex),
+            AnthropicBadRequestException => new("Claude couldn't read that request. Start a new chat and try again. " +
+                $"If it keeps happening, the reason is: {Trim(ex.Message, 300)}", ex),
             AnthropicIOException or HttpRequestException or TaskCanceledException =>
                 new("Can't reach Claude. Check the internet connection.", ex),
             _ => new("Something went wrong talking to Claude. The details are in the app log.", ex),

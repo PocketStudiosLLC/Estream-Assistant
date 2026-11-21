@@ -26,6 +26,28 @@ public class ChatToolsTests
     }
 
     [Fact]
+    public void Strict_schemas_stay_inside_the_API_limits()
+    {
+        // API limits across all strict tools in one request: 20 tools, 24 optional params, 16 union-typed params.
+        // Going over fails EVERY chat request with a 400 (v0.1.4 hit 16 unions). Keep a margin.
+        static int Unions(JsonElement schema)
+        {
+            int n = 0;
+            if (schema.ValueKind != JsonValueKind.Object) return 0;
+            if (schema.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.Array) n++;
+            if (schema.TryGetProperty("anyOf", out _)) n++;
+            if (schema.TryGetProperty("properties", out var props))
+                foreach (var p in props.EnumerateObject()) n += Unions(p.Value);
+            if (schema.TryGetProperty("items", out var items)) n += Unions(items);
+            return n;
+        }
+        var strict = ChatTools.All.Where(t => t.Strict).ToList();
+        int unions = strict.Sum(t => Unions(JsonDocument.Parse(t.SchemaJson).RootElement));
+        Assert.True(strict.Count <= 18, $"{strict.Count} strict tools (limit 20)");
+        Assert.True(unions <= 15, $"{unions} nullable/union parameters across all tools (API limit 16)");
+    }
+
+    [Fact]
     public void No_write_tools_exist()
     {
         // Spec S3: Claude must never be able to save or post on its own.
@@ -329,7 +351,8 @@ public sealed class ClaudeChatServiceTests : IDisposable
         Assert.Equal("ephemeral", r.GetProperty("cache_control").GetProperty("type").GetString());
         var tools = r.GetProperty("tools").EnumerateArray().ToList();
         Assert.Equal(ChatTools.All.Count, tools.Count);
-        Assert.All(tools, t => Assert.True(t.GetProperty("strict").GetBoolean()));
+        Assert.All(tools, t => Assert.Equal(
+            ChatTools.All.Single(d => d.Name == t.GetProperty("name").GetString()).Strict, t.GetProperty("strict").GetBoolean()));
         Assert.All(tools, t => Assert.False(t.GetProperty("input_schema").GetProperty("additionalProperties").GetBoolean()));
         // Context note goes into the owner's message, ahead of their text.
         var firstContent = r.GetProperty("messages")[0].GetProperty("content");

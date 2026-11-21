@@ -255,7 +255,7 @@ public class ReportToolsTests : IDisposable
     [Fact]
     public async Task Stock_sheets_lists_then_shows_one()
     {
-        var list = await _tools.ExecuteAsync(ChatTools.StockSheets, In(new { sheet = (int?)null, include_closed = true }));
+        var list = await _tools.ExecuteAsync(ChatTools.StockSheets, In(new { sheet = 0, include_closed = true }));
         using (var d = JsonDocument.Parse(list.Json))
         {
             var sheets = d.RootElement.GetProperty("sheets");
