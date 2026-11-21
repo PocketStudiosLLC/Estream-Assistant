@@ -21,6 +21,7 @@ public sealed class UsageTracker
     {
         ["claude-opus-5-5"] = new(4.00m, 20.00m, 0.20m),
         ["claude-sonnet-5-5"] = new(2.00m, 10.00m, 0.10m),
+        ["claude-haiku-5-5"] = new(0.10m, 0.50m, 0.01m),
         ["claude-opus-5"] = new(5.00m, 25.00m, 0.50m),
         ["claude-opus-4-8"] = new(5.00m, 25.00m, 0.50m),
         ["claude-sonnet-5"] = new(2.00m, 10.00m, 0.20m),

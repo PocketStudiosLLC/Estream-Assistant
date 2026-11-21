@@ -9,9 +9,22 @@ Everything below is built but hasn't been tried for real yet. Most of it needs t
 - [ ] Receipt: drop a real invoice photo. Lines, costs and unreadable lines look right.
 - [ ] Receipt: "30% markup on the chips" gives sensible prices.
 - [ ] Receipt: try a PDF invoice.
-- [ ] Count sheet photo: counts are read and only added after you confirm.
-- [ ] Is effort "low" good enough for receipts, or is "medium" needed?
+-  ] Count sheet photo: counts are read and only added after you confirm.
+- [ ] Model routing: a text message uses the chat model, a message with a photo/PDF uses the receipt model (check the app log).
+- [ ] Is Sonnet good enough for chat, or is Haiku enough? Is the receipt model at medium effort right for receipts?
 - [ ] Asking Claude to save is refused.
+
+## Reports and stock sheets (on the store PC, Data source = Sql)
+- [ ] Open the app log after starting: it says either "Stock sheet tables: columns as expected" or
+      "Stock sheet tables are different…" with the real columns. If different, send that line so the sheet queries can be fixed
+      (`SqlItemRepository.StockSheetColumns` and the two sheet queries).
+- [ ] Reports tab → Negative stock: the count looks right next to eStream, and it comes back in a few seconds.
+- [ ] Below minimum / Above re-order max / Zero stock look sensible.
+- [ ] Ask the assistant "which items have negative stock?": it uses stock_report and points to the Reports tab.
+- [ ] Stock sheets: the open sheets match eStream (Inventory > Stock Sheets), incl. the owner's 10749, 10750, 10754 marked protected.
+- [ ] Open one sheet: item names and UPCs are right (if not, `Adjustments.Invennum` isn't the barcode), counted/system match eStream's
+      Print Stock On Hand for that sheet.
+- [ ] Export CSV opens in Excel; Print prints a readable table.
 
 ## On the store PC (Windows)
 - [ ] The installer runs without admin rights; the app starts from the Start menu.

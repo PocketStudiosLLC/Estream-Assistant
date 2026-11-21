@@ -44,8 +44,13 @@ public sealed class AppSettings
     public List<int> ProtectedBatches { get; set; } = [];
 
     // Claude
-    public string Model { get; set; } = "claude-opus-5-5";
+    /// <summary>Model for ordinary text messages (lookups, questions, pricing). The cheaper one.</summary>
+    public string Model { get; set; } = "claude-sonnet-5-5";
     public string Effort { get; set; } = "low";
+    /// <summary>Model for messages that carry a photo or PDF (receipts, invoices, count sheets). The better reader.</summary>
+    public string ReceiptModel { get; set; } = "claude-opus-5-5";
+    /// <summary>Effort for those messages (spec 7.1 suggests medium for receipts).</summary>
+    public string ReceiptEffort { get; set; } = "medium";
     /// <summary>Spec 7.4: after this many messages in one chat, suggest a new chat to keep costs down. 0 = never.</summary>
     public int LongChatTurns { get; set; } = 60;
     /// <summary>US$ per million tokens, per model, when they differ from the built-in table (spec 7.1).</summary>

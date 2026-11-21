@@ -29,11 +29,16 @@ public sealed class ToolExecutor
     private readonly PendingChanges? _pending;
     private readonly Counts.StockCounts? _counts;
     private readonly Receipts.ReceiptSession? _receipt;
+    private readonly Reports.ReportService? _reports;
     private CodeTables? _codes;
 
+    /// <summary>How many report rows go back to Claude (the full list is on the Reports tab).</summary>
+    public const int ReportRowsForClaude = 40;
+
     public ToolExecutor(ItemLookupService lookup, AppSettings settings, PendingChanges? pending = null, Counts.StockCounts? counts = null,
-        Receipts.ReceiptSession? receipt = null)
+        Receipts.ReceiptSession? receipt = null, Reports.ReportService? reports = null)
     {
+        _reports = reports;
         _lookup = lookup;
         _settings = settings;
         _pending = pending;
@@ -59,10 +64,16 @@ public sealed class ToolExecutor
                 ChatTools.CreateStockSheet => await CreateStockSheetAsync(input, ct).ConfigureAwait(false),
                 ChatTools.ShowReceiptLines => await ShowReceiptLinesAsync(input, ct).ConfigureAwait(false),
                 ChatTools.PriceReceiptLines => PriceReceiptLines(input),
+                ChatTools.StockReport => await StockReportAsync(input, ct).ConfigureAwait(false),
+                ChatTools.StockSheets => await StockSheetsAsync(input, ct).ConfigureAwait(false),
                 _ => ToolOutcome.Error($"Unknown tool '{name}'. Only {string.Join(", ", ChatTools.All.Select(t => t.Name))} exist."),
             };
         }
         catch (ToolInputException ex)
+        {
+            return ToolOutcome.Error(ex.Message);
+        }
+        catch (StockSheetSetupException ex)
         {
             return ToolOutcome.Error(ex.Message);
         }
@@ -383,6 +394,112 @@ public sealed class ToolExecutor
             not_priced = missing,
             not_priced_reason = missing.Count > 0 ? "Those lines have no matched item or no cost yet." : null,
             next = "Tell the owner each price as Now -> New. Stage with stage_changes (price, and case_cost from new_case_cost) only when they agree.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> StockReportAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_reports is null) throw new ToolInputException("Reports aren't available.");
+        var filter = GetString(input, "filter", 20) switch
+        {
+            "negative" => StockFilter.Negative,
+            "zero" => StockFilter.Zero,
+            "below_min" => StockFilter.BelowMin,
+            "above_max" => StockFilter.AboveMax,
+            _ => throw new ToolInputException("filter must be negative, zero, below_min or above_max."),
+        };
+        var r = await _reports.StockAsync(filter, GetBool(input, "include_inactive"), ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            report = r.Report.Title,
+            summary = r.Report.Summary,
+            total_items = r.Rows.Count,
+            more_than_shown_in_app = r.Truncated,
+            total_on_hand = filter is StockFilter.Negative or StockFilter.Zero ? r.TotalUnits : (decimal?)null,
+            units_needed_to_reach_min = filter == StockFilter.BelowMin ? r.TotalUnits : (decimal?)null,
+            units_over_max = filter == StockFilter.AboveMax ? r.TotalUnits : (decimal?)null,
+            value_at_cost = filter == StockFilter.Negative ? r.TotalValue : (decimal?)null,
+            rows_here = Math.Min(r.Rows.Count, ReportRowsForClaude),
+            items = r.Rows.Take(ReportRowsForClaude).Select(i => new
+            {
+                upc = i.Upc.ToString(CultureInfo.InvariantCulture),
+                description = i.Description,
+                on_hand = i.OnHand,
+                min = i.Min,
+                max = i.Max,
+                sold = i.Sold,
+                inactive = i.Inactive ? true : (bool?)null,
+            }),
+            next = r.Rows.Count == 0
+                ? "Nothing matched. Tell the owner."
+                : "Give the owner the totals and the worst few items. The full list is on the Reports tab, where they can export it " +
+                  "to CSV or print it; mention that instead of reading out a long list. Don't stage changes from this unless the owner asks.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> StockSheetsAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_reports is null) throw new ToolInputException("Reports aren't available.");
+        var sheet = NullableInt(input, "sheet");
+        if (sheet is null)
+        {
+            var list = await _reports.SheetListAsync(GetBool(input, "include_closed"), ct).ConfigureAwait(false);
+            return new(JsonSerializer.Serialize(new
+            {
+                summary = list.Report.Summary,
+                sheets = list.Sheets.Take(ReportRowsForClaude).Select(s => new
+                {
+                    sheet = s.Info.Id,
+                    cut_off = s.Info.CloseDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    comment = s.Info.Comment,
+                    supervisor = s.Info.Supervisor,
+                    status = s.Info.Closed ? "closed" : "open",
+                    items = s.Info.Lines,
+                    note = s.Note.Length > 0 ? s.Note : null,
+                }),
+                next = "The list is also on the Reports tab. To see a sheet's items and checks, call stock_sheets with its number.",
+            }, Json), false);
+        }
+
+        if (sheet is < 1) throw new ToolInputException("sheet must be a sheet number.");
+        var r = await _reports.SheetAsync(sheet.Value, ct).ConfigureAwait(false);
+        if (r is null)
+            return new(JsonSerializer.Serialize(new
+            {
+                found = false,
+                sheet,
+                message = "There's no stock sheet with that number in eStream.",
+            }, Json), false);
+
+        return new(JsonSerializer.Serialize(new
+        {
+            found = true,
+            sheet = r.Sheet.Info.Id,
+            comment = r.Sheet.Info.Comment,
+            cut_off = r.Sheet.Info.CloseDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            status = r.Sheet.Info.Closed ? "closed" : "open",
+            note = r.Sheet.Note.Length > 0 ? r.Sheet.Note : null,
+            items = r.Lines.Count,
+            over = r.Over,
+            @short = r.Short,
+            unchanged = r.Unchanged,
+            net_units = r.NetUnits,
+            net_value_at_cost = r.NetValue,
+            checks = r.Checks,
+            biggest_differences = r.Lines
+                .Where(l => l.OverShort != 0)
+                .OrderByDescending(l => Math.Abs(l.OverShort * l.UnitCost)).ThenByDescending(l => Math.Abs(l.OverShort))
+                .Take(ReportRowsForClaude)
+                .Select(l => new
+                {
+                    upc = l.Upc.ToString(CultureInfo.InvariantCulture),
+                    description = l.Description,
+                    system = l.System,
+                    counted = l.Counted,
+                    over_short = l.OverShort,
+                }),
+            next = "Tell the owner the totals and the checks in plain words. The full sheet is on the Reports tab. " +
+                   "You can't post a sheet: posting (no undo) is only on the Stock counts tab, for sheets this app made.",
         }, Json), false);
     }
 

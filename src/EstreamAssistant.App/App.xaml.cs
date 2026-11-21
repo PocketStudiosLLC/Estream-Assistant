@@ -9,6 +9,7 @@ using EstreamAssistant.Core.Counts;
 using EstreamAssistant.Core.Data;
 using EstreamAssistant.Core.Logging;
 using EstreamAssistant.Core.Receipts;
+using EstreamAssistant.Core.Reports;
 using EstreamAssistant.Core.Settings;
 
 namespace EstreamAssistant.App;
@@ -88,15 +89,17 @@ public partial class App : Application
             ? Path.Combine(settings.EngineFolder, "Receipts")
             : Directory.CreateDirectory(Path.Combine(paths.Root, "mock-engine", "Receipts")).FullName;
         var receiptFolder = new ReceiptFolder(receiptInbox, _log);
-        var tools = new ToolExecutor(lookup, settings, pending, counts, receipt);
+        var reports = new ReportService(lookup, () => settings.ProtectedSheets, () => counts.Sheets, _log);
+        var tools = new ToolExecutor(lookup, settings, pending, counts, receipt, reports);
         IChatService chat = e.Args.Contains("--demo-chat")
             ? new DemoChatService(tools)
             : new ClaudeChatService(secrets.GetApiKey, settings, tools, usage, _log);
-        _log.Info($"Chat: {chat.GetType().Name}, model {settings.Model}, effort {settings.Effort}, prompt {ClaudeChatService.SystemPromptVersion}.");
+        _log.Info($"Chat: {chat.GetType().Name}, chat model {settings.Model} ({settings.Effort}), receipt model {settings.ReceiptModel} ({settings.ReceiptEffort}), prompt {ClaudeChatService.SystemPromptVersion}.");
         var mainVm = new MainViewModel(lookup, settings, secrets, _log, new EStreamMonitor(), settingsVm, chat, usage, pending)
         {
             History = new HistoryViewModel(history),
             Counts = new CountsViewModel(counts, lookup, _log),
+            Reports = new ReportsViewModel(reports, _log),
         };
         mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder);
         _log.Info(receiptFolder.Start() ? $"Watching {receiptFolder.Inbox} for receipts." : $"No receipts folder at {receiptFolder.Inbox}; not watching.");
@@ -116,6 +119,12 @@ public partial class App : Application
             _log.Warn($"Found a save that didn't finish (started {interrupted.Started}): {interrupted.JournalFile}");
             mainVm.ReportInterruptedSave(interrupted);
         }
+        // Writes the real stock sheet columns to the log if they differ from what the sheet queries expect.
+        _ = Task.Run(async () =>
+        {
+            try { await repo.CheckStockSheetTablesAsync(); }
+            catch (Exception ex) { _log.Warn("Couldn't check the stock sheet tables: " + ex.Message); }
+        });
         if (e.Args.Length > 0) await RunDemoAsync(e.Args, mainVm, window, pending);
     }
 
@@ -231,6 +240,21 @@ public partial class App : Application
                 case "--demo-chat":
                     i--; // flag without a value
                     break;
+                case "--report":
+                    // --report negative|zero|below_min|above_max|sheets|<sheet number>  (shows it on the Reports tab)
+                    var rv = vm.Reports!;
+                    if (int.TryParse(value, out var sheetNo)) { await rv.OpenSheetAsync(sheetNo); break; }
+                    rv.SelectedChoice = rv.Choices.FirstOrDefault(c => value switch
+                    {
+                        "negative" => c.Filter == Core.Models.StockFilter.Negative,
+                        "zero" => c.Filter == Core.Models.StockFilter.Zero,
+                        "below_min" => c.Filter == Core.Models.StockFilter.BelowMin,
+                        "above_max" => c.Filter == Core.Models.StockFilter.AboveMax,
+                        _ => c.Filter is null,
+                    }) ?? rv.Choices[0];
+                    rv.SheetText = "";
+                    await rv.RunCommand.ExecuteAsync(null);
+                    break;
                 case "--tab" when int.TryParse(value, out var tab):
                     window.Tabs.SelectedIndex = tab;
                     break;
@@ -251,7 +275,7 @@ public partial class App : Application
         if (settings.DataSource == DataSourceKind.Sql)
         {
             _log!.Info("Data source: eStream SQL (read-only).");
-            return new SqlItemRepository(settings.ConnectionString);
+            return new SqlItemRepository(settings.ConnectionString) { Log = _log!.Info };
         }
 
         if (settings.SampleDataPath is { Length: > 0 } samplePath && File.Exists(samplePath))

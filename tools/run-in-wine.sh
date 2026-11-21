@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run the Windows build on Linux with Wine, for quick visual checks (dev PC only).
 # Usage: tools/run-in-wine.sh [demo args]
-#   e.g. tools/run-in-wine.sh --search "lays cucumber" --pick 2 --scan 060410079591 --tab 3
+#   e.g. tools/run-in-wine.sh --search "lays cucumber" --pick 2 --scan 060410079591 --tab 4
 # Needs: wine (pacman -S wine) and the .NET SDK.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

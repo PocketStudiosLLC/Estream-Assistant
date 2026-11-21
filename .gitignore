@@ -11,3 +11,7 @@ sample-items.txt
 # Original plan from the store PC: describes the store setup, keep private
 Plan.txt
 dist/
+
+# eStream map and exports from the store PC: store name, protected sheet numbers, store data
+eStream-map.md
+estream-for-dev/

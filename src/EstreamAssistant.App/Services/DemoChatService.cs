@@ -63,6 +63,34 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
             reply = "With a 30% markup the chips come out as shown in the receipt table. Tick the lines you want and press Add to pending, " +
                     "or tell me and I'll add them.\n\n(Demo reply.)";
         }
+        else if (text.Contains("negative", StringComparison.OrdinalIgnoreCase) || text.Contains("below min", StringComparison.OrdinalIgnoreCase))
+        {
+            var filter = text.Contains("negative", StringComparison.OrdinalIgnoreCase) ? "negative" : "below_min";
+            progress?.Report(new ChatEvent.ToolStarted(ChatTools.StockReport, "Making the stock report…"));
+            var r = await tools.ExecuteAsync(ChatTools.StockReport, Args(new { filter, include_inactive = false }), ct);
+            using var d = JsonDocument.Parse(r.Json);
+            var items = d.RootElement.GetProperty("items").EnumerateArray().Take(3)
+                .Select(i => $"{i.GetProperty("description").GetString()} ({i.GetProperty("on_hand").GetDecimal():0.##})");
+            reply = $"{d.RootElement.GetProperty("summary").GetString()}. The worst are {string.Join(", ", items)}. " +
+                    "The full list is on the Reports tab, where you can export it or print it.\n\n(Demo reply: no API key used.)";
+        }
+        else if (text.Contains("sheet", StringComparison.OrdinalIgnoreCase))
+        {
+            var number = new string(text.Where(char.IsDigit).ToArray());
+            progress?.Report(new ChatEvent.ToolStarted(ChatTools.StockSheets, "Reading stock sheets…"));
+            var r = await tools.ExecuteAsync(ChatTools.StockSheets,
+                Args(new { sheet = number.Length is > 0 and < 9 ? int.Parse(number, CultureInfo.InvariantCulture) : (int?)null, include_closed = true }), ct);
+            using var d = JsonDocument.Parse(r.Json);
+            var root = d.RootElement;
+            reply = root.TryGetProperty("error", out var err) ? err.GetString() + "\n\n(Demo reply.)"
+                : root.TryGetProperty("checks", out var checks)
+                    ? $"Sheet {root.GetProperty("sheet").GetInt32()}: {root.GetProperty("items").GetInt32()} items, {root.GetProperty("over").GetInt32()} over, " +
+                      $"{root.GetProperty("short").GetInt32()} short.\n" + string.Join("\n", checks.EnumerateArray().Select(c => "- " + c.GetString())) +
+                      "\n\nThe whole sheet is on the Reports tab.\n\n(Demo reply: no API key used.)"
+                : root.TryGetProperty("summary", out var sum)
+                    ? $"{sum.GetString()}. The list is on the Reports tab.\n\n(Demo reply: no API key used.)"
+                    : "There's no stock sheet with that number.\n\n(Demo reply.)";
+        }
         else if (UpcNormalizer.LooksLikeUpc(digits) || text.Contains("UPC", StringComparison.OrdinalIgnoreCase))
         {
             int at = text.IndexOf("UPC", StringComparison.OrdinalIgnoreCase);

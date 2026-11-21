@@ -305,6 +305,7 @@ public sealed partial class MainViewModel : ObservableObject
     public SettingsViewModel Settings { get; }
     public HistoryViewModel? History { get; init; }
     public CountsViewModel? Counts { get; init; }
+    public ReportsViewModel? Reports { get; init; }
 
     /// <summary>Raised when the scan box should get focus back (after a lookup, a choice, ...).</summary>
     public event EventHandler? FocusScanBoxRequested;
@@ -364,10 +365,13 @@ public sealed partial class MainViewModel : ObservableObject
         };
     }
 
+    private string ModelSummary =>
+        $"Chat {_settings.Model} ({_settings.Effort}), receipts {_settings.ReceiptModel} ({_settings.ReceiptEffort})";
+
     private void UpdateClaudeStatus()
     {
         (ClaudeStatus, ClaudeStatusText) = _chat.IsConfigured
-            ? (StatusLevel.Unknown, $"API key saved. Model {_settings.Model}, effort {_settings.Effort}. Not tested yet.")
+            ? (StatusLevel.Unknown, $"API key saved. {ModelSummary}. Not tested yet.")
             : (StatusLevel.Bad, "No API key yet. Add it in Settings.");
     }
 
@@ -391,7 +395,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             await _chat.TestConnectionAsync(CancellationToken.None);
             ClaudeStatus = StatusLevel.Ok;
-            ClaudeStatusText = $"Connected. Model {_settings.Model}, effort {_settings.Effort}.";
+            ClaudeStatusText = $"Connected. {ModelSummary}.";
             Settings.TestResult = "Connected to Claude.";
         }
         catch (ChatException ex)
@@ -519,7 +523,7 @@ public sealed partial class MainViewModel : ObservableObject
             }
             if (result.Refused && Feed.IndexOf(bubble) is var bi and >= 0) Feed[bi] = Replace(bubble, FeedKind.Error);
             ClaudeStatus = StatusLevel.Ok;
-            ClaudeStatusText = $"Connected. Model {_settings.Model}, effort {_settings.Effort}.";
+            ClaudeStatusText = $"Connected. {ModelSummary}.";
         }
         catch (OperationCanceledException)
         {

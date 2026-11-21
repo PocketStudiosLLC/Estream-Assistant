@@ -22,6 +22,8 @@ public static class ChatTools
     public const string CreateStockSheet = "create_stock_sheet";
     public const string ShowReceiptLines = "show_receipt_lines";
     public const string PriceReceiptLines = "price_receipt_lines";
+    public const string StockReport = "stock_report";
+    public const string StockSheets = "stock_sheets";
 
     public sealed record Definition(string Name, string Description, string SchemaJson)
     {
@@ -94,6 +96,28 @@ public static class ChatTools
             "Only call it when the owner asks for a dry run or agrees to one. Returns each row's result.",
             """
             {"type":"object","properties":{},"required":[],"additionalProperties":false}
+            """),
+        new(StockReport,
+            "Stock report: list ALL items with negative stock, zero stock, stock below their minimum, or stock above their re-order max. " +
+            "Read-only. The full list goes to the Reports tab (the owner can export it to CSV or print it); you get the totals and the " +
+            "first rows (worst first). Use it for questions like 'which items are negative?' or 'what's below min?'.",
+            """
+            {"type":"object","properties":{
+              "filter":{"type":"string","enum":["negative","zero","below_min","above_max"],
+                "description":"negative: on hand below 0. zero: on hand exactly 0. below_min: a minimum is set and on hand is below it. above_max: a re-order max is set and on hand is above it."},
+              "include_inactive":{"type":"boolean","description":"true to include inactive items. Use false unless the owner asks for them."}
+            },"required":["filter","include_inactive"],"additionalProperties":false}
+            """),
+        new(StockSheets,
+            "Stock sheets in eStream, read-only. With sheet=null: lists the stock sheets (open ones first) with their cut-off date, comment " +
+            "and number of items. With a sheet number: that sheet's items (system vs counted, over/short), totals, and checks to look at " +
+            "before posting (items counted 0, big differences, negative system stock, a sheet that wasn't counted yet). " +
+            "The full list goes to the Reports tab. This never changes or posts a sheet.",
+            """
+            {"type":"object","properties":{
+              "sheet":{"type":["integer","null"],"description":"The stock sheet number, or null to list the sheets."},
+              "include_closed":{"type":"boolean","description":"When listing: true to include closed sheets too. Ignored when a sheet number is given."}
+            },"required":["sheet","include_closed"],"additionalProperties":false}
             """),
         new(StockCountPreview,
             "Stock counts: show counted vs system on-hand (over/short) for items. Changes nothing in eStream. " +

@@ -11,7 +11,7 @@
     <RootNamespace>EstreamAssistant.App</RootNamespace>
     <AssemblyName>EstreamAssistant</AssemblyName>
     <Product>eStream Assistant</Product>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>

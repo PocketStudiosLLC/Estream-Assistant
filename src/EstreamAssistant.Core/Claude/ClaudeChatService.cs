@@ -41,7 +41,10 @@ public interface IChatService
 /// Claude conversation + manual tool loop over the beta Messages API (streaming).
 ///  - System prompt and tool list are frozen and cached (cache_control on the system block),
 ///    plus top-level automatic caching for the growing conversation.
-///  - Effort comes from Settings; thinking is left at the model default (adaptive on Opus 5.5).
+///  - Model routing: a message with a photo or PDF (and its whole tool loop) uses the receipt model
+///    and effort; every other message uses the cheaper chat model. Caches are per model, so the
+///    first message after a switch writes a new cache instead of reading one.
+///  - Effort comes from Settings; thinking is left at the model default (adaptive).
 ///  - Server-side fallbacks ("default") re-serve a safety-classifier refusal on another model.
 ///  - Claude can only call the read-only tools in <see cref="ChatTools"/>.
 /// History is append-only: a failed turn is rolled back as a whole, never edited.
@@ -62,6 +65,8 @@ public sealed class ClaudeChatService : IChatService
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private AnthropicClient? _client;
     private string? _clientKey;
+    /// <summary>Model of the last completed turn (a switch means a cold cache, not a problem).</summary>
+    private string? _lastModel;
 
     /// <summary>Tests only: send requests to a local fake server instead of the real API.</summary>
     internal string? BaseUrlOverride { get; init; }
@@ -92,9 +97,18 @@ public sealed class ClaudeChatService : IChatService
         }
     }
 
+    /// <summary>Which model and effort a message uses: photos/PDFs go to the receipt model.</summary>
+    public readonly record struct Route(string Model, string Effort, bool IsReceipt);
+
+    internal static Route RouteFor(AppSettings s, int attachmentCount) =>
+        attachmentCount > 0 && !string.IsNullOrWhiteSpace(s.ReceiptModel)
+            ? new Route(s.ReceiptModel.Trim(), s.ReceiptEffort, true)
+            : new Route(s.Model.Trim(), s.Effort, false);
+
     public void Reset()
     {
         _history.Clear();
+        _lastModel = null;
         lock (_notes) _notes.Clear();
         _log?.Info($"Chat session reset (prompt {SystemPromptVersion}).");
     }
@@ -102,19 +116,24 @@ public sealed class ClaudeChatService : IChatService
     public async Task TestConnectionAsync(CancellationToken ct)
     {
         var client = Client();
-        try
+        // Test both models, so a key without access to one of them shows up here, not mid-receipt.
+        foreach (var model in new[] { _settings.Model.Trim(), _settings.ReceiptModel.Trim() }.Where(m => m.Length > 0).Distinct())
         {
-            await client.Beta.Messages.Create(new MessageCreateParams
+            try
             {
-                Model = _settings.Model,
-                MaxTokens = 256,
-                OutputConfig = new BetaOutputConfig { Effort = Effort.Low },
-                Messages = [new BetaUserMessageParam { Content = "Reply with the word OK." }],
-            }, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            throw Friendly(ex);
+                await client.Beta.Messages.Create(new MessageCreateParams
+                {
+                    Model = model,
+                    MaxTokens = 256,
+                    OutputConfig = new BetaOutputConfig { Effort = Effort.Low },
+                    Messages = [new BetaUserMessageParam { Content = "Reply with the word OK." }],
+                }, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var f = Friendly(ex);
+                throw new ChatException($"{model}: {f.Message}", ex);
+            }
         }
     }
 
@@ -132,7 +151,11 @@ public sealed class ClaudeChatService : IChatService
             var client = Client();
             _history.Add(new BetaUserMessageParam { Content = BuildOwnerContent(ownerText, attachments) });
             if (_settings.DebugLogging) _log?.Info($"[debug] Owner: {ownerText}");
-            bool warm = snapshot > 0;
+            var route = RouteFor(_settings, attachments.Count);
+            // A warm cache only exists for the model the previous turn used.
+            bool warm = snapshot > 0 && _lastModel == route.Model;
+            if (snapshot > 0 && _lastModel is not null && _lastModel != route.Model)
+                _log?.Info($"Switching model {_lastModel} -> {route.Model}{(route.IsReceipt ? " (receipt)" : "")}; this message writes a fresh cache.");
             if (attachments.Count > 0)
                 _log?.Info($"Sent {attachments.Count} receipt file(s): {string.Join(", ", attachments.Select(a => $"{a.FileName} {a.MediaType} {a.SizeText}"))}");
 
@@ -140,9 +163,9 @@ public sealed class ClaudeChatService : IChatService
             long cacheRead = 0;
             for (int round = 0; round < MaxToolRounds; round++)
             {
-                BetaMessage msg = await StreamOneAsync(client, progress, ct).ConfigureAwait(false);
+                BetaMessage msg = await StreamOneAsync(client, route, progress, ct).ConfigureAwait(false);
 
-                var model = msg.Model.Raw() ?? _settings.Model;
+                var model = msg.Model.Raw() ?? route.Model;
                 var u = msg.Usage;
                 var sample = new UsageSample(u.InputTokens, u.OutputTokens, u.CacheReadInputTokens ?? 0, u.CacheCreationInputTokens ?? 0);
                 cost += _usage.Record(model, sample);
@@ -171,6 +194,7 @@ public sealed class ClaudeChatService : IChatService
                     if (_settings.DebugLogging) _log?.Info($"[debug] Claude: {text}");
                     bool truncated = stop == "max_tokens";
                     if (truncated) text += "\n\n(My answer was cut off. Ask me to continue.)";
+                    _lastModel = route.Model;
                     return new ChatTurnResult(text, false, truncated, cost, cacheRead);
                 }
 
@@ -217,11 +241,11 @@ public sealed class ClaudeChatService : IChatService
         }
     }
 
-    private async Task<BetaMessage> StreamOneAsync(AnthropicClient client, IProgress<ChatEvent>? progress, CancellationToken ct)
+    private async Task<BetaMessage> StreamOneAsync(AnthropicClient client, Route route, IProgress<ChatEvent>? progress, CancellationToken ct)
     {
         var p = new MessageCreateParams
         {
-            Model = _settings.Model,
+            Model = route.Model,
             MaxTokens = 64000,
             // Frozen prefix: tools -> system. Nothing volatile before this breakpoint.
             System = new List<BetaTextBlockParam>
@@ -231,10 +255,10 @@ public sealed class ClaudeChatService : IChatService
             Tools = Tools,
             // Automatic caching of the growing conversation.
             CacheControl = new BetaCacheControlEphemeral(),
-            OutputConfig = new BetaOutputConfig { Effort = ParseEffort(_settings.Effort) },
+            OutputConfig = new BetaOutputConfig { Effort = ParseEffort(route.Effort) },
             Messages = [.. _history],
         };
-        if (SupportsServerFallback(_settings.Model))
+        if (SupportsServerFallback(route.Model))
         {
             p = p with { Betas = [FallbackBeta], Fallbacks = new Default() };
         }
@@ -376,6 +400,8 @@ public sealed class ClaudeChatService : IChatService
             ChatTools.CreateStockSheet => "Asking you to confirm a new stock sheet…",
             ChatTools.ShowReceiptLines => "Matching the receipt lines to eStream items…",
             ChatTools.PriceReceiptLines => "Working out prices for the receipt…",
+            ChatTools.StockReport => "Making the stock report…",
+            ChatTools.StockSheets => "Reading stock sheets…",
             _ => "Working…",
         };
     }

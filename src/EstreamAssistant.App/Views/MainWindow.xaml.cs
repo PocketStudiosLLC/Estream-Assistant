@@ -56,6 +56,23 @@ public partial class MainWindow : Window
             };
             counts.FocusCountRequested += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Input, () => { CountBox.Focus(); CountBox.SelectAll(); });
         }
+        if (vm.Reports is { } reports)
+        {
+            reports.PickSaveFile = name =>
+            {
+                var dlg = new Microsoft.Win32.SaveFileDialog { Filter = "CSV file (*.csv)|*.csv", FileName = name, Title = "Export report" };
+                return dlg.ShowDialog(this) == true ? dlg.FileName : null;
+            };
+            reports.PrintReport = r => ReportPrinter.Print(this, r);
+            ReportGrid.AutoGeneratingColumn += OnReportColumn;
+            ReportGrid.MouseDoubleClick += async (_, e) =>
+            {
+                // Double-click a sheet in the sheet list: show that sheet's items.
+                if (!reports.IsSheetList || ReportGrid.SelectedItem is not System.Data.DataRowView row) return;
+                if (e.OriginalSource is DependencyObject d && ItemsControl.ContainerFromElement(ReportGrid, d) is null) return;
+                if (row["c0"] is long id) await reports.OpenSheetAsync((int)id);
+            };
+        }
         // Receipts (spec F5.1): drag/drop anywhere on the window, Ctrl+V, and the 📎 button.
         vm.PickReceiptFiles = () =>
         {
@@ -87,6 +104,32 @@ public partial class MainWindow : Window
         _eStreamTimer.Tick += (_, _) => vm.CheckEStream();
         _eStreamTimer.Start();
         Closed += (_, _) => _eStreamTimer.Stop();
+    }
+
+    /// <summary>Report grid columns: the header is the DataColumn caption; numbers right-aligned and formatted.</summary>
+    private void OnReportColumn(object? sender, DataGridAutoGeneratingColumnEventArgs e)
+    {
+        if (ReportGrid.ItemsSource is not System.Data.DataView view || !view.Table!.Columns.Contains(e.PropertyName)) return;
+        var col = view.Table.Columns[e.PropertyName]!;
+        e.Column.Header = col.Caption;
+        var kind = col.ExtendedProperties[ReportsViewModel.KindKey] is Core.Reports.ReportColumnKind k ? k : Core.Reports.ReportColumnKind.Text;
+        if (e.Column is not DataGridTextColumn tc || tc.Binding is not System.Windows.Data.Binding b) return;
+        b.ConverterCulture = System.Globalization.CultureInfo.GetCultureInfo("en-CA");
+        b.StringFormat = kind switch
+        {
+            Core.Reports.ReportColumnKind.Money => "C2",
+            Core.Reports.ReportColumnKind.Number => "0.##",
+            _ when col.DataType == typeof(DateTime) => "MMM d, yyyy",
+            _ => null,
+        };
+        if (kind is Core.Reports.ReportColumnKind.Number or Core.Reports.ReportColumnKind.Money)
+        {
+            var style = new Style(typeof(TextBlock));
+            style.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Right));
+            tc.ElementStyle = style;
+        }
+        if (col.Caption is "Description" or "Comment" or "Note")
+            tc.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
     }
 
     private const string DropHint = "Drop a receipt photo or PDF here, or paste it (Ctrl+V)";

@@ -44,7 +44,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IReadOnlyList<ExecutorKind> Executors { get; } = Enum.GetValues<ExecutorKind>();
     [ObservableProperty] private ExecutorKind _executor;
     public IReadOnlyList<PricingMode> PricingModes { get; } = Enum.GetValues<PricingMode>();
-    public IReadOnlyList<string> Models { get; } = ["claude-opus-5-5", "claude-sonnet-5-5"];
+    public IReadOnlyList<string> Models { get; } = ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"];
     public IReadOnlyList<string> Efforts { get; } = ["low", "medium", "high"];
 
     public string DataFolder => _paths.Root;
@@ -55,6 +55,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _engineFolder = "";
     [ObservableProperty] private string _model = "";
     [ObservableProperty] private string _effort = "";
+    [ObservableProperty] private string _receiptModel = "";
+    [ObservableProperty] private string _receiptEffort = "";
     [ObservableProperty] private PricingMode _defaultPricingMode;
     [ObservableProperty] private string _defaultMarkupPct = "";
     [ObservableProperty] private string _priceEndings = "";
@@ -118,6 +120,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         Executor = s.Executor;
         Model = s.Model;
         Effort = s.Effort;
+        ReceiptModel = s.ReceiptModel;
+        ReceiptEffort = s.ReceiptEffort;
         DefaultPricingMode = s.DefaultPricingMode;
         DefaultMarkupPct = s.DefaultMarkupPct.ToString(CultureInfo.InvariantCulture);
         PriceEndings = string.Join(", ", s.PriceEndings.Select(e => e.ToString("00", CultureInfo.InvariantCulture)));
@@ -164,6 +168,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         { StatusMessage = "Barcode digits: min and max between 4 and 20, min not more than max (default 6 and 14)."; return; }
         if (!int.TryParse(LongChatTurns, out var longChat) || longChat is < 0 or > 1000)
         { StatusMessage = "Long chat must be a number of messages, e.g. 60 (0 = never suggest a new chat)."; return; }
+        if (string.IsNullOrWhiteSpace(Model) || string.IsNullOrWhiteSpace(ReceiptModel))
+        { StatusMessage = "Choose a chat model and a receipt model."; return; }
         if (!Money(PriceIn, out var pIn) || !Money(PriceOut, out var pOut) || !Money(PriceCacheRead, out var pCache))
         { StatusMessage = "Claude prices must be dollar amounts per million tokens, e.g. 4.00."; return; }
 
@@ -180,6 +186,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.Executor = Executor;
         _settings.Model = Model.Trim();
         _settings.Effort = Effort;
+        _settings.ReceiptModel = ReceiptModel.Trim();
+        _settings.ReceiptEffort = ReceiptEffort;
         _settings.DefaultPricingMode = DefaultPricingMode;
         _settings.DefaultMarkupPct = markup;
         _settings.PriceEndings = endings;

@@ -17,6 +17,7 @@ public sealed class NameCache
     private readonly string _path;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private volatile FuzzyMatcher _matcher = new([]);
+    private volatile Dictionary<long, ItemName> _byUpc = [];
 
     public NameCache(string path) => _path = path;
 
@@ -26,6 +27,9 @@ public sealed class NameCache
     public bool IsRefreshing => _refreshLock.CurrentCount == 0;
 
     public FuzzyMatcher Matcher => _matcher;
+
+    /// <summary>The cached name for a UPC, or null if it isn't in the cache.</summary>
+    public ItemName? Get(long upc) => _byUpc.GetValueOrDefault(upc);
 
     public bool IsStale(TimeSpan maxAge, DateTime? nowUtc = null) =>
         LastRefreshedUtc is null || (nowUtc ?? DateTime.UtcNow) - LastRefreshedUtc.Value > maxAge;
@@ -67,7 +71,11 @@ public sealed class NameCache
 
     private void Set(IEnumerable<ItemName> items, DateTime refreshedUtc, string source)
     {
-        _matcher = new FuzzyMatcher(items);
+        var list = items as IReadOnlyCollection<ItemName> ?? items.ToList();
+        _matcher = new FuzzyMatcher(list);
+        var byUpc = new Dictionary<long, ItemName>(list.Count);
+        foreach (var i in list) byUpc.TryAdd(i.Upc, i);
+        _byUpc = byUpc;
         LastRefreshedUtc = refreshedUtc;
         Source = source;
     }

@@ -66,6 +66,66 @@ public sealed class MockItemRepository : IItemRepository
 
     public Task<bool> PingAsync(CancellationToken ct = default) => Task.FromResult(true);
 
+    public async Task<IReadOnlyList<StockRow>> GetStockRowsAsync(StockFilter filter, bool includeInactive, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        lock (_items)
+            return _items.Values
+                .Where(i => includeInactive || !i.Inactive)
+                .Where(i => filter switch
+                {
+                    StockFilter.Negative => i.OnHand < 0,
+                    StockFilter.Zero => i.OnHand == 0,
+                    StockFilter.BelowMin => i.Min > 0 && i.OnHand < i.Min,
+                    StockFilter.AboveMax => i.Max > 0 && i.OnHand > i.Max,
+                    _ => false,
+                })
+                .Select(i => new StockRow
+                {
+                    Upc = i.Upc, OnHand = i.OnHand, Min = i.Min, Max = i.Max, Sold = i.Sold,
+                    UnitCost = i.UnitCost, Price = i.Price, For = i.For, Inactive = i.Inactive,
+                })
+                .ToList();
+    }
+
+    /// <summary>MOCK stock sheets (made-up numbers): one open, one closed.</summary>
+    public List<StockSheetInfo> Sheets { get; } =
+    [
+        new() { Id = 9002, CloseDate = new DateTime(2026, 11, 17), Comment = "Chips aisle (sample)", Supervisor = "OWNER", Closed = false, Lines = 4 },
+        new() { Id = 9001, CloseDate = new DateTime(2026, 10, 30), Comment = "Drinks cooler (sample)", Supervisor = "OWNER", Closed = true, Lines = 3 },
+    ];
+
+    public Dictionary<int, List<StockSheetLine>> SheetLines { get; } = new()
+    {
+        [9002] =
+        [
+            new() { Upc = 60410079591, System = 14, Counted = 12, UnitCost = 3.30m },
+            new() { Upc = 60410079966, System = 9, Counted = 9, UnitCost = 3.30m },
+            new() { Upc = 28400090360, System = 7, Counted = 0, UnitCost = 3.30m },
+            new() { Upc = 60410041277, System = -3, Counted = 20, UnitCost = 3.30m },
+        ],
+        [9001] =
+        [
+            new() { Upc = 67000000409, System = 30, Counted = 28, UnitCost = 2.52m },
+            new() { Upc = 69000002056, System = 16, Counted = 16, UnitCost = 2.40m },
+            new() { Upc = 61126999100, System = 2, Counted = 5, UnitCost = 2.17m },
+        ],
+    };
+
+    public async Task<IReadOnlyList<StockSheetInfo>> GetStockSheetsAsync(bool includeClosed, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        return Sheets.Where(s => includeClosed || !s.Closed).OrderBy(s => s.Closed).ThenByDescending(s => s.Id).ToList();
+    }
+
+    public async Task<IReadOnlyList<StockSheetLine>> GetStockSheetLinesAsync(int sheetId, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        return SheetLines.TryGetValue(sheetId, out var lines) ? lines.ToList() : [];
+    }
+
+    public Task<string?> CheckStockSheetTablesAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
+
     /// <summary>
     /// Loads the output of the sqlcmd export in Plan.txt sec. 12
     /// (-s "|" -W, columns UPC|Description|SellingPrice|PriceMult|CaseCost|PacksPerCase|
@@ -147,6 +207,10 @@ public sealed class MockItemRepository : IItemRepository
         Mk(68000001236, "KRAFT DINNER ORIG 225G", 2.00m, 2, 13.92m, 1, 12, 0, sold: 450, onHand: 24, min: 12, max: 48),
         Mk(57000002152, "HEINZ KETCHUP 1L", 5.49m, 1, 39.00m, 1, 12, 0, sold: 130, onHand: 5, min: 3, max: 12),
         Mk(65633001015, "CHEERIOS 430G", 6.99m, 1, 59.40m, 1, 12, 0, sold: 160, onHand: 6, min: 3, max: 12),
+        // Negative on hand (sold more than was received): for the stock reports.
+        Mk(61126999100, "RED BULL 250ML", 3.49m, 1, 52.08m, 1, 24, 10, sold: 340, onHand: -6, min: 6, max: 24),
+        Mk(62000000123, "EGGS LARGE 12", 4.99m, 1, 51.00m, 1, 15, 0, sold: 820, onHand: -11, min: 10, max: 30),
+        Mk(62000000550, "ICE 3KG", 3.29m, 1, 18.00m, 1, 12, 0, sold: 260, onHand: -2, min: 0, max: 0),
         // Stored without its check digit (~2% of eStream codes are like this).
         Mk(6563300102, "OLD DUTCH RIPPLE 255G", 4.49m, 1, 48.00m, 1, 16, 0, sold: 50, onHand: 0, min: 0, max: 0, inactive: true),
     ];

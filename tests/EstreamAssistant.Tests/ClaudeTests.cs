@@ -321,7 +321,7 @@ public sealed class ClaudeChatServiceTests : IDisposable
         var r = first.RootElement;
         Assert.Contains(ClaudeChatService.FallbackBeta, beta);
         Assert.Equal("default", r.GetProperty("fallbacks").GetString());
-        Assert.Equal("claude-opus-5-5", r.GetProperty("model").GetString());
+        Assert.Equal("claude-sonnet-5-5", r.GetProperty("model").GetString()); // text → chat model
         Assert.True(r.GetProperty("stream").GetBoolean());
         Assert.Equal("low", r.GetProperty("output_config").GetProperty("effort").GetString());
         Assert.False(r.TryGetProperty("thinking", out _)); // model default (adaptive)
@@ -374,6 +374,42 @@ public sealed class ClaudeChatServiceTests : IDisposable
         Assert.Equal("document", content[3].GetProperty("type").GetString());
         Assert.Equal("application/pdf", content[3].GetProperty("source").GetProperty("media_type").GetString());
         Assert.Equal("30% markup on the chips", content[4].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task Photos_use_the_receipt_model_for_the_whole_turn_and_text_goes_back_to_the_chat_model()
+    {
+        _responses.Enqueue(TextTurn("Hi."));
+        _responses.Enqueue(ToolUseTurn());
+        _responses.Enqueue(TextTurn("I read 3 lines."));
+        _responses.Enqueue(TextTurn("Done."));
+        var svc = Make(out _);
+        var photo = new EstreamAssistant.Core.Receipts.ReceiptFile("pepsi.jpg", "image/jpeg", [0xFF, 0xD8, 0xFF, 1],
+            EstreamAssistant.Core.Receipts.ReceiptOrigin.File, null);
+
+        await svc.SendAsync("hello", null, CancellationToken.None);
+        await svc.SendAsync("read this", [photo], null, CancellationToken.None);
+        await svc.SendAsync("30% markup on the chips", null, CancellationToken.None);
+
+        string Model(int i) => Requests[i].Body.RootElement.GetProperty("model").GetString()!;
+        string Effort(int i) => Requests[i].Body.RootElement.GetProperty("output_config").GetProperty("effort").GetString()!;
+        Assert.Equal(4, Requests.Count);
+        Assert.Equal(("claude-sonnet-5-5", "low"), (Model(0), Effort(0)));
+        // Both rounds of the receipt turn (tool call, then answer) stay on the receipt model.
+        Assert.Equal(("claude-opus-5-5", "medium"), (Model(1), Effort(1)));
+        Assert.Equal(("claude-opus-5-5", "medium"), (Model(2), Effort(2)));
+        Assert.Equal(("claude-sonnet-5-5", "low"), (Model(3), Effort(3)));
+        // Same conversation throughout: the last request carries the whole history.
+        Assert.Equal(7, Requests[3].Body.RootElement.GetProperty("messages").GetArrayLength());
+    }
+
+    [Theory]
+    [InlineData(0, "claude-haiku-5-5", "low", false)]
+    [InlineData(2, "claude-opus-5-5", "high", true)]
+    public void RouteFor_picks_the_model_by_attachments(int attachments, string model, string effort, bool receipt)
+    {
+        var s = new AppSettings { Model = " claude-haiku-5-5 ", Effort = "low", ReceiptModel = "claude-opus-5-5", ReceiptEffort = "high" };
+        Assert.Equal(new ClaudeChatService.Route(model, effort, receipt), ClaudeChatService.RouteFor(s, attachments));
     }
 
     /// <summary>Spec 12.3: an attempt to save through chat is refused by the app, whatever the model asks for.</summary>

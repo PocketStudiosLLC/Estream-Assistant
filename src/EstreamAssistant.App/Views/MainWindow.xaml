@@ -784,6 +784,88 @@
                 </Grid>
             </TabItem>
 
+            <!-- ===================== REPORTS ===================== -->
+            <TabItem Header="  Reports  ">
+                <Grid Margin="6" DataContext="{Binding Reports}">
+                    <Border Style="{StaticResource Card}">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top">
+                                <TextBlock DockPanel.Dock="Right" Text="Read-only: nothing here changes eStream" FontSize="12" Foreground="{StaticResource Muted}" />
+                                <TextBlock Text="REPORTS" Style="{StaticResource SectionTitle}" />
+                            </DockPanel>
+                            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" DisplayMemberPath="Label" MinWidth="200" Margin="0,0,10,4" />
+                                <CheckBox Content="Include inactive items" IsChecked="{Binding IncludeInactive}" VerticalAlignment="Center" Margin="0,0,14,4"
+                                          Foreground="{StaticResource Text}" Visibility="{Binding IsStockChoice, Converter={StaticResource Visible}}" />
+                                <Grid Width="140" Margin="0,0,10,4" Visibility="{Binding IsSheetChoice, Converter={StaticResource Visible}}">
+                                    <TextBox x:Name="ReportSheetBox" Text="{Binding SheetText, UpdateSourceTrigger=PropertyChanged}" MinHeight="34"
+                                             ToolTip="A stock sheet number shows that sheet's items. Leave it blank to list the sheets." />
+                                    <TextBlock Text="Sheet # (optional)" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{StaticResource Placeholder}"
+                                               Visibility="{Binding Text, ElementName=ReportSheetBox, Converter={StaticResource Hidden}}" />
+                                </Grid>
+                                <CheckBox Content="Include closed sheets" IsChecked="{Binding IncludeClosed}" VerticalAlignment="Center" Margin="0,0,14,4"
+                                          Foreground="{StaticResource Text}" Visibility="{Binding IsSheetChoice, Converter={StaticResource Visible}}" />
+                                <Button Content="Show" Command="{Binding RunCommand}" Style="{StaticResource PrimaryButton}" MinWidth="90" Margin="0,0,16,4" />
+                                <Button Content="Export CSV…" Command="{Binding ExportCsvCommand}" Margin="0,0,8,4" ToolTip="Save this report as a CSV file (opens in Excel)" />
+                                <Button Content="Print…" Command="{Binding PrintCommand}" Margin="0,0,8,4" />
+                                <Button Content="All sheets" Command="{Binding OpenSheetListCommand}" Margin="0,0,8,4"
+                                        Visibility="{Binding IsSheet, Converter={StaticResource Visible}}" ToolTip="Back to the list of stock sheets" />
+                            </WrapPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" TextWrapping="Wrap" Foreground="{StaticResource Warning}" Margin="2,0,0,8"
+                                       Visibility="{Binding Status, Converter={StaticResource Visible}}" />
+                            <TextBlock DockPanel.Dock="Top" Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" Margin="2,0,0,2" />
+                            <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource Muted}" Margin="2,0,0,6" />
+                            <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Notes}" Margin="2,0,0,6"
+                                          Visibility="{Binding HasNotes, Converter={StaticResource Visible}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StringFormat=• {0}}" TextWrapping="Wrap" Foreground="{StaticResource Warning}" FontSize="14" Margin="0,1" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <DataGrid x:Name="ReportGrid" ItemsSource="{Binding Table}" AutoGenerateColumns="True" IsReadOnly="True"
+                                      CanUserAddRows="False" CanUserDeleteRows="False" CanUserResizeRows="False" SelectionMode="Single"
+                                      HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0" FontSize="14"
+                                      Background="{StaticResource CardBg}" RowBackground="{StaticResource CardBg}" AlternatingRowBackground="#34383D"
+                                      Foreground="{StaticResource Text}" HorizontalGridLinesBrush="{StaticResource Border}"
+                                      EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizing="True">
+                                <DataGrid.ColumnHeaderStyle>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="Background" Value="{StaticResource TopBarBg}" />
+                                        <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                                        <Setter Property="FontSize" Value="12" />
+                                        <Setter Property="Padding" Value="8,6" />
+                                        <Setter Property="BorderBrush" Value="{StaticResource Border}" />
+                                        <Setter Property="BorderThickness" Value="0,0,1,1" />
+                                    </Style>
+                                </DataGrid.ColumnHeaderStyle>
+                                <DataGrid.CellStyle>
+                                    <Style TargetType="DataGridCell">
+                                        <Setter Property="BorderThickness" Value="0" />
+                                        <Setter Property="Padding" Value="8,4" />
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="DataGridCell">
+                                                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                                        <ContentPresenter VerticalAlignment="Center" />
+                                                    </Border>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="{StaticResource OwnerBubble}" />
+                                                <Setter Property="Foreground" Value="{StaticResource Text}" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.CellStyle>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
             <!-- ===================== SETTINGS ===================== -->
             <TabItem Header="  Settings  ">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -792,12 +874,12 @@
                             <StackPanel>
                                 <TextBlock Text="CLAUDE" Style="{StaticResource SectionTitle}" />
                                 <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,0,0,8"
-                                           Text="Needs an Anthropic Console API key (billed per use, separate from any Claude subscription). The key is encrypted for this Windows user only." />
+                                           Text="Needs an Anthropic Console API key (billed per use, separate from any Claude subscription). The key is encrypted for this Windows user only. Text messages use the chat model; messages with a photo or PDF (receipts, invoices, count sheets) use the receipt model." />
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="160" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
                                     <TextBlock Text="Saved key" Style="{StaticResource FieldLabel}" />
                                     <TextBlock Grid.Column="1" Text="{Binding ApiKeyDisplay}" Style="{StaticResource FieldValue}" />
                                     <Button Grid.Column="2" Content="Remove key" Command="{Binding ClearApiKeyCommand}"
@@ -805,21 +887,30 @@
                                     <TextBlock Grid.Row="1" Text="New key" Style="{StaticResource FieldLabel}" />
                                     <PasswordBox Grid.Row="1" Grid.Column="1" x:Name="ApiKeyBox" Margin="0,4" Padding="6,4" />
                                     <Button Grid.Row="1" Grid.Column="2" Content="Save key" Click="SaveApiKey_Click" />
-                                    <TextBlock Grid.Row="2" Text="Model" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Grid.Row="2" Text="Chat model" Style="{StaticResource FieldLabel}" />
                                     <ComboBox Grid.Row="2" Grid.Column="1" IsEditable="True" Margin="0,4"
-                                              ItemsSource="{Binding Models}" Text="{Binding Model, UpdateSourceTrigger=PropertyChanged}" />
-                                    <TextBlock Grid.Row="3" Text="Effort" Style="{StaticResource FieldLabel}" />
+                                              ItemsSource="{Binding Models}" Text="{Binding Model, UpdateSourceTrigger=PropertyChanged}"
+                                              ToolTip="For text messages: lookups, searches, prices, changes. Sonnet is a good balance; Haiku is cheapest." />
+                                    <TextBlock Grid.Row="3" Text="Chat effort" Style="{StaticResource FieldLabel}" />
                                     <ComboBox Grid.Row="3" Grid.Column="1" Margin="0,4"
                                               ItemsSource="{Binding Efforts}" SelectedItem="{Binding Effort}"
                                               ToolTip="low = fastest and cheapest (fine for lookups); high = more careful on hard questions" />
-                                    <Button Grid.Row="4" Grid.Column="0" Content="Test connection" Command="{Binding TestConnectionCommand}"
+                                    <TextBlock Grid.Row="4" Text="Receipt model" Style="{StaticResource FieldLabel}" />
+                                    <ComboBox Grid.Row="4" Grid.Column="1" IsEditable="True" Margin="0,4"
+                                              ItemsSource="{Binding Models}" Text="{Binding ReceiptModel, UpdateSourceTrigger=PropertyChanged}"
+                                              ToolTip="For messages with a photo or PDF. Opus reads receipts most reliably." />
+                                    <TextBlock Grid.Row="5" Text="Receipt effort" Style="{StaticResource FieldLabel}" />
+                                    <ComboBox Grid.Row="5" Grid.Column="1" Margin="0,4"
+                                              ItemsSource="{Binding Efforts}" SelectedItem="{Binding ReceiptEffort}"
+                                              ToolTip="medium is suggested for reading receipts" />
+                                    <Button Grid.Row="6" Grid.Column="0" Content="Test connection" Command="{Binding TestConnectionCommand}"
                                             IsEnabled="{Binding HasApiKey}" HorizontalAlignment="Left" Margin="0,6,0,0" />
-                                    <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding TestResult}" TextWrapping="Wrap"
+                                    <TextBlock Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding TestResult}" TextWrapping="Wrap"
                                                Style="{StaticResource FieldValue}" Margin="10,6,0,0" />
-                                    <TextBlock Grid.Row="5" Text="Long chat" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Grid.Row="5" Grid.Column="1" Margin="0,4" Text="{Binding LongChatTurns}"
+                                    <TextBlock Grid.Row="7" Text="Long chat" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Grid.Row="7" Grid.Column="1" Margin="0,4" Text="{Binding LongChatTurns}"
                                              ToolTip="After this many messages in one chat, the app suggests New chat (long chats cost more). 0 = never." />
-                                    <CheckBox Grid.Row="6" Grid.Column="1" Margin="0,6" IsChecked="{Binding DebugLogging}"
+                                    <CheckBox Grid.Row="8" Grid.Column="1" Margin="0,6" IsChecked="{Binding DebugLogging}"
                                               Content="Debug log: also write chat messages to the app log" />
                                 </Grid>
                                 <TextBlock Text="{Binding PricesLabel}" Style="{StaticResource FieldLabel}" Margin="0,10,0,2" />

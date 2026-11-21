@@ -22,17 +22,18 @@ dotnet test
 
 ```
 tools/run-in-wine.sh                      # just open it
-tools/run-in-wine.sh --search "lays cucumber" --pick 2 --scan 060410079591 --tab 3
+tools/run-in-wine.sh --search "lays cucumber" --pick 2 --scan 060410079591 --tab 4
 tools/run-in-wine.sh --demo-chat --chat "lays cucumber" --choose 2
 tools/run-in-wine.sh --stage "060410079591:price=4.79,max=30" --stage "60410079966:price=9.99" --dryrun
 tools/run-in-wine.sh --mock-unverified 60410079966 --stage "060410079591:price=4.79" --stage "60410079966:price=4.49" --dryrun --save --tab 1
 tools/run-in-wine.sh --tab 2 --count 060410079591=10 --count 4011=25 --make-sheet "Chips aisle" --post-first
+tools/run-in-wine.sh --demo-chat --chat "which items have negative stock?" --report 9002 --tab 3
 tools/run-in-wine.sh --demo-chat --attach 'Z:\path\to\invoice.jpg' --send --chat "30% markup on the chips" --pick-line 2 --stage-receipt
 ```
 
 The `--search`, `--pick`, `--scan`, `--chat`, `--choose`, `--stage`, `--dryrun`, `--save` (auto-confirms), `--save-dialog`,
 `--mock-unverified`, `--mock-fail`, `--count`, `--make-sheet` (auto-confirms), `--post-first` (opens the real
-post dialog), `--attach`, `--send`, `--pick-line`, `--stage-receipt`, `--edit` and `--tab` options are for demos only: they feed
+post dialog), `--attach`, `--send`, `--pick-line`, `--stage-receipt`, `--report` (negative, zero, below_min, above_max, sheets or a sheet number), `--edit` and `--tab` options are for demos only: they feed
 input to the app after it starts. `--demo-chat` swaps Claude for a scripted stand-in that uses the real
 read-only tools, so the chat can be checked without an API key or any cost. Wine is fine for checking layout,
 but focus handling and scanner timing need a real Windows PC.
@@ -95,7 +96,7 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
 - [x] **Phase 1**: shell window, settings (API key encrypted with DPAPI), UPC lookup with check-digit fallbacks,
       fuzzy name search with numbered choices, scanner detection, item card, scan list, eStream/DB status lights.
       Pricing math is also built and tested (used from Phase 3).
-- [x] **Phase 2**: Claude chat (`claude-opus-5-5`, streaming) with read-only tools only: `lookup_item`, `find_items`,
+- [x] **Phase 2**: Claude chat (streaming; text messages use the chat model, default `claude-sonnet-5-5`; messages with a photo or PDF use the receipt model, default `claude-opus-5-5` at medium effort) with read-only tools only: `lookup_item`, `find_items`,
       `get_codes`, `calc_price` (strict schemas, inputs re-checked in the app). The system prompt and tools are
       prompt-cached; effort comes from Settings (default low). Server-side fallback (`fallbacks: "default"`)
       retries safety-classifier refusals on a backup model. Numbered choices in Claude's replies become buttons;
@@ -127,8 +128,8 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
       New case costs are only offered: the owner ticks lines and presses *Add ticked to pending*, or agrees in chat; then the usual
       safety rules, dry run and SAVE apply. *Finish receipt* moves Receipts-folder files to `Receipts\Done\` (time suffix if the name
       is taken); dropped files are copied there and pastes written there. On the dev PC the folder is `mock-engine\Receipts` in the app folder.
-      **To check with a real API key:** reading real receipts and the effort level (spec 7.1 suggests medium for receipts; the app uses
-      the one effort setting, because changing effort mid-chat resets the prompt cache).
+      **To check with a real API key:** reading real receipts and the effort level (spec 7.1 suggests medium for receipts; receipts now have
+      their own model and effort in Settings).
 - [x] **Phase 6** (v0.1.2): **Stock counts** tab. With the tab open, a scan picks the item, then type the count
       and press Enter (counts of the same item can add up); or import a `UPC,Count` CSV; or Claude adds counts you give it
       (`stock_count_preview`). Each row shows counted, system on-hand and over/short (with value at cost); the list is kept
@@ -138,6 +139,17 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
       type the sheet number (Enter does nothing until it matches), then the real post. Only sheets this app made can be
       posted, once; sheets in Settings → *Protected sheets* never. The first real post is flagged as one to watch.
       The mock engine makes TEST sheets (90001…) that only change the sample data.
+- [x] **Reports**: a **Reports** tab and two read-only Claude tools. `stock_report` lists every item with
+      negative stock, zero stock, stock below its minimum or above its re-order max (worst first, with totals). `stock_sheets`
+      lists eStream's stock sheets (open first) or shows one sheet: system vs counted, over/short, value at cost, and checks
+      to look at before posting (items counted 0, big differences, negative system stock, a sheet that wasn't counted yet,
+      sheets the app can't post). Every report can be exported to CSV or printed; double-click a sheet in the list to open it.
+      Claude gets the totals and the first 40 rows; the full list is on the tab. The stock queries don't read
+      `Inventory.Description` (slow on the store PC): names come from the name cache.
+      **To check on the store PC:** the stock sheet column names. Only `SheetClosed`, `Invennum`, `Units` and `ActualUnits`
+      are in eStream-map.md; `SheetNum`, `CloseDate`, `Comment` and `Supervisor` are guesses, and so is `Invennum` holding the
+      barcode. At startup the app compares them with the real tables and, if they differ, writes the real columns to the app
+      log ("Stock sheet tables are different…"); stock sheet reading stays off until the queries are fixed.
 - [x] **Smaller spec items** (v0.1.2): *Edit* on a pending row (U5) opens the item's change form with the pending values;
       *Retry* after a failed chat message (spec 10); a "start a New chat?" note after a long chat (7.4, Settings → *Long chat*);
       stock counts read from a photo of a count sheet (F6.1, confirmed before they go in the count list); History filters by
