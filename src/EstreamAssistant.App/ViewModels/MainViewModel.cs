@@ -449,7 +449,7 @@ public sealed partial class MainViewModel : ObservableObject
             await _chat.TestConnectionAsync(CancellationToken.None);
             ClaudeStatus = StatusLevel.Ok;
             ClaudeStatusText = $"Connected. {ModelSummary}.";
-            Settings.TestResult = "Connected to Claude.";
+            Settings.TestResult = $"Connected to Claude. {ModelSummary}.";
         }
         catch (ChatException ex)
         {

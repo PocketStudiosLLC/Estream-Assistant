@@ -246,6 +246,13 @@ public sealed partial class ReportsViewModel : ObservableObject
         {
             _log.Error("Report failed", ex);
             Status = "The report failed: " + ex.Message;
+            // Don't leave the previous report on screen under the error (test 3).
+            Current = null;
+            Table = null;
+            Notes.Clear();
+            Title = $"{SelectedChoice} - failed";
+            Summary = "Nothing to show. " + Status;
+            OnPropertyChanged(nameof(HasReport));
         }
         finally
         {

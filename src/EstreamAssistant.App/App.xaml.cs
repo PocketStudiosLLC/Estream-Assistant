@@ -115,6 +115,8 @@ public partial class App : Application
         IChatService chat = e.Args.Contains("--demo-chat")
             ? new DemoChatService(tools)
             : new ClaudeChatService(secrets.GetApiKey, settings, tools, usage, _log);
+        if (chat is ClaudeChatService claude)
+            claude.StateSnapshot = () => AppStateNote.Describe(pending, counts, receipt, pending.PriceBatchMinItems);
         _log.Info($"Chat: {chat.GetType().Name}, chat model {settings.Model} ({settings.Effort}), receipt model {settings.ReceiptModel} ({settings.ReceiptEffort}), prompt {ClaudeChatService.SystemPromptVersion}.");
         var mainVm = new MainViewModel(lookup, settings, secrets, _log, new EStreamMonitor(), settingsVm, chat, usage, pending)
         {

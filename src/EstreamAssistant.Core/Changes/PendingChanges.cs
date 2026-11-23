@@ -388,6 +388,8 @@ public sealed class PendingChanges
             {
                 if (r.Status != RowStatus.DryRunOk) { final.Add(r); continue; }
                 var error = r.ViaPriceBatch ? batch.Error : itemError;
+                // A run that was stopped half-way still reports the items it finished.
+                if (error is not null && !r.ViaPriceBatch && byUpc.ContainsKey(r.Upc)) error = null;
                 if (error is not null)
                 {
                     final.Add(r with { Status = RowStatus.Unknown, Message = error + " Check this item in eStream before trying again." });
@@ -682,10 +684,10 @@ public sealed class PendingChanges
         if (item is not null && v.Fields.Any(f => f.Field is ChangeField.Price or ChangeField.For or ChangeField.CaseCost))
         {
             decimal New(ChangeField f, decimal now) => v.Fields.FirstOrDefault(x => x.Field == f)?.NewValue ?? now;
-            // eStream's GM is per pack (case cost ÷ packs per case), not per unit.
-            var unitNow = item.PackCost;
+            // Per item as sold (case cost ÷ packs × units), not eStream's per-pack GM (wrong for "1 × N" items).
+            var unitNow = item.SellCost;
             var unitNew = v.Fields.Any(f => f.Field == ChangeField.CaseCost)
-                ? PricingCalculator.PackCost(New(ChangeField.CaseCost, item.CaseCost), item.PacksPerCase, item.UnitsPerPack, item.UnitCost)
+                ? PricingCalculator.SellCost(New(ChangeField.CaseCost, item.CaseCost), item.PacksPerCase, item.UnitsPerPack, item.UnitCost)
                 : unitNow;
             decimal Gm(decimal price, decimal forQty, decimal unit) =>
                 forQty >= 1 && price > 0 ? PricingCalculator.GrossMarginPct(price / forQty, unit) : 0;

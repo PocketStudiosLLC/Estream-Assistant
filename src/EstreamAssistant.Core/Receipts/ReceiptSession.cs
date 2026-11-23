@@ -283,9 +283,19 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             "Receipt: each count is on hand now + the units received (a negative on hand counts as 0). " +
             "Posting adds only the difference, so sales made in between are kept. Post it on the Stock counts tab.",
         };
+        // Owner's rule: a negative on hand counts as 0, so posting adds MORE than was received. Fine for a fresh
+        // delivery; for an old receipt those goods were probably sold already (test 3: a 4-week-old Costco receipt,
+        // HALF & HALF on hand -36 + 10 received -> +46).
+        var negative = rc.Rows.Where(r => r.SystemOnHand < 0).ToList();
+        if (negative.Count > 0)
+            notes.Add($"{negative.Count} item{(negative.Count == 1 ? " has" : "s have")} a NEGATIVE on hand, so posting adds more than was received: " +
+                string.Join("; ", negative.Take(5).Select(r => $"{r.Description} {N(r.SystemOnHand)} → {N(r.Count)} adds {N(r.Count - r.SystemOnHand)}")) +
+                (negative.Count > 5 ? $"; and {negative.Count - 5} more" : "") +
+                ". If this receipt is old and those goods were already sold, cancel and leave those lines out.");
         notes.AddRange(rc.Problems.Select(p => "Left out: " + p));
         var run = await counts.CreateSheetAsync(rc.Rows, comment, ct, notes).ConfigureAwait(false);
-        if (run.SheetId is not null || counts.HasSheetFor(rc.Rows)) MarkOnStockSheet(rc.Lines, run.SheetId);
+        // A sheet that came out wrong doesn't count: the lines can go on a new one once it's deleted in eStream.
+        if (run.Ok || counts.HasSheetFor(rc.Rows)) MarkOnStockSheet(rc.Lines, run.SheetId);
         return (run, rc);
     }
 
@@ -296,16 +306,11 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>A new unit cost as a pack cost (unit cost × units per pack), the basis of eStream's GM%.</summary>
-    internal static decimal PackCostOf(Item item, decimal unitCost) => unitCost * Math.Max(1, item.UnitsPerPack);
-
     private ReceiptLine ApplyRule(ReceiptLine line, PriceRule rule)
     {
         var item = line.Item!;
-        // The price is per pack (one item sold at the till; eStream's GM uses case cost ÷ packs), and for the
-        // item's For quantity ("2 for $5"), so price that many packs.
-        var packCost = PackCostOf(item, line.UnitCost!.Value);
-        var r = PricingCalculator.Calculate(packCost * Math.Max(1, item.For), rule.Mode, rule.Pct,
+        // The price is per item as sold (the unit cost), for the item's For quantity ("2 for $5").
+        var r = PricingCalculator.Calculate(line.UnitCost!.Value * Math.Max(1, item.For), rule.Mode, rule.Pct,
             rule.ApplyEndings ? priceEndings() : null);
         return line with { Rule = rule, ProposedPrice = r.Price, ProposedGm = r.GmPct };
     }
@@ -325,16 +330,35 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         string matchedBy = "";
         var candidates = new List<ReceiptCandidate>();
         // input.Upc is only set for an item the owner confirmed (here or in the chat).
-        foreach (var (code, confirmed) in new[] { (input.Upc, true), (input.Code, false) })
+        if (input.Upc is { } picked && UpcNormalizer.LooksLikeUpc(picked)
+            && (await lookup.LookupUpcAsync(picked, ct).ConfigureAwait(false)).Item is { } pickedItem)
         {
-            if (code is null || !UpcNormalizer.LooksLikeUpc(code)) continue;
-            var r = await lookup.LookupUpcAsync(code, ct).ConfigureAwait(false);
-            if (r.Item is null) continue;
-            item = r.Item;
-            matchedBy = confirmed ? "picked" : "UPC";
-            break;
+            item = pickedItem;
+            matchedBy = "picked";
         }
-        if (item is null && input.Text.Trim().Length > 0)
+        // The printed code can be a UPC or the store's Shelf Code (test 3: Costco item numbers are shelf codes, and
+        // Costco's 1019 HALF & HALF is also the UPC/PLU of PROPANE). One hit = matched; several = the owner picks.
+        string? codeProblem = null;
+        if (item is null && input.Code?.Trim() is { Length: > 0 } code)
+        {
+            var hits = new List<(Item Item, string How)>();
+            if (UpcNormalizer.LooksLikeUpc(code) && (await lookup.LookupUpcAsync(code, ct).ConfigureAwait(false)).Item is { } byUpc)
+                hits.Add((byUpc, "UPC"));
+            foreach (var upc in await lookup.Repository.FindByShelfCodeAsync(code, ct).ConfigureAwait(false))
+                if (hits.All(h => h.Item.Upc != upc) && await lookup.Repository.GetByBarcodeAsync(upc, ct).ConfigureAwait(false) is { } bySc)
+                    hits.Add((bySc, "shelf code"));
+            if (hits.Count == 1)
+            {
+                item = hits[0].Item;
+                matchedBy = hits[0].How;
+            }
+            else if (hits.Count > 1)
+            {
+                candidates = hits.Select(h => new ReceiptCandidate(h.Item.Upc, $"{h.Item.Description} ({h.How} {code})", 100)).ToList();
+                codeProblem = $"Code {code} matches {hits.Count} items (as a UPC or a shelf code): pick the right one.";
+            }
+        }
+        if (item is null && codeProblem is null && input.Text.Trim().Length > 0)
         {
             var found = await lookup.FindAsync(input.Text, 4, ct).ConfigureAwait(false);
             candidates = found.Matches.Select(m => new ReceiptCandidate(m.Item.Upc, m.Item.Description, m.MatchPercent)).ToList();
@@ -352,9 +376,9 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
                 Input = input,
                 Status = candidates.Count > 0 ? ReceiptLineStatus.NeedsChoice : ReceiptLineStatus.NoMatch,
                 Candidates = candidates,
-                Warnings = [candidates.Count > 0
+                Warnings = [codeProblem ?? (candidates.Count > 0
                     ? "Not sure which item this is: pick one."
-                    : "No eStream item matches. Scan it, or add it in eStream by hand."],
+                    : "No eStream item matches. Scan it, or add it in eStream by hand.")],
             };
 
         var warnings = new List<string>();
@@ -402,7 +426,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
                 if (Math.Abs(changePct.Value) > 50)
                     warnings.Add($"The cost changes by {changePct:0.#}%. Check the case size and this line.");
             }
-            if (item.Price > 0) gmNow = PricingCalculator.GrossMarginPct(item.Price / Math.Max(1, item.For), PackCostOf(item, uc));
+            if (item.Price > 0) gmNow = PricingCalculator.GrossMarginPct(item.Price / Math.Max(1, item.For), uc);
         }
 
         decimal? receivedUnits = null;

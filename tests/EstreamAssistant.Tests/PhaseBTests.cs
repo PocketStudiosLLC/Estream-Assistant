@@ -111,13 +111,14 @@ public sealed class PhaseBTests : IDisposable
         Assert.Equal(expected, ReportService.MarginProblem(Facts((decimal)price, (decimal)cost, @for), (decimal)target, out _, out _));
 
     [Fact]
-    public void Margin_uses_the_cost_per_pack_like_estream()
+    public void Margin_uses_the_cost_per_item_sold_for_1_by_n_items()
     {
-        // TEST item A on the store PC: 1 pack × 12 units, case $12.00, $99.00 -> eStream's StoreGM 87.88%, not 99%.
-        var f = Facts(99.00m, 1.00m, packs: 1, units: 12, caseCost: 12.00m);
+        // Real store item (test 3): COCA-COLA 1 pack × 32 units, case $14.69, sold one can at a time for $2.25.
+        // eStream's own GM divides by packs only (case $14.69 > $2.25 = 0%); the real margin is ~79.6%.
+        var f = Facts(2.25m, 0.4591m, packs: 1, units: 32, caseCost: 14.69m);
         Assert.Null(ReportService.MarginProblem(f, 0, out _, out var gm));
-        Assert.Equal(87.88m, gm);
-        Assert.Equal(12.00m, f.PackCost);
+        Assert.Equal(79.6m, Math.Round(gm, 1));
+        Assert.Equal(0.4591m, f.SellCost);
     }
 
     [Fact]

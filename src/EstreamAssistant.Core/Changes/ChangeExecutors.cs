@@ -99,7 +99,7 @@ public sealed class MockChangeExecutor(IItemRepository repo, string? resultsFold
         {
             Price = price,
             GmPct = Pricing.PricingCalculator.GrossMarginPct(price / Math.Max(1, forQty),
-                Pricing.PricingCalculator.PackCost(caseCost, i.PacksPerCase, i.UnitsPerPack, Math.Round(caseCost / units, 4))),
+                Pricing.PricingCalculator.EStreamGmCost(caseCost, i.PacksPerCase, i.UnitsPerPack, Math.Round(caseCost / units, 4))),
             For = forQty,
             CaseCost = caseCost,
             UnitCost = Math.Round(caseCost / units, 4),
@@ -120,12 +120,12 @@ public sealed class MockChangeExecutor(IItemRepository repo, string? resultsFold
 /// moves a file to Done\ when it runs without -Path, so a SAVE file left in Inbox\ would be applied AGAIN by the
 /// next plain Invoke-EsCsv run (PAD flow, or someone running the script by hand).
 /// </summary>
-public sealed class PowerShellChangeExecutor(string engineFolder, string runsFolder, AppLog? log = null) : IChangeExecutor
+public sealed partial class PowerShellChangeExecutor(string engineFolder, string runsFolder, AppLog? log = null) : IChangeExecutor
 {
     public string Name => "PowerShell scripts";
     public bool DrivesEStream => true;
-    public TimeSpan BaseTimeout { get; init; } = TimeSpan.FromSeconds(60);
-    public TimeSpan PerItemTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan BaseTimeout { get; init; } = TimeSpan.FromSeconds(120);
+    public TimeSpan PerItemTimeout { get; init; } = TimeSpan.FromSeconds(90);
 
     public string ScriptPath => Path.Combine(engineFolder, "Invoke-EsCsv.ps1");
     public string DoneFolder => Path.Combine(engineFolder, "Done");
@@ -158,7 +158,15 @@ public sealed class PowerShellChangeExecutor(string engineFolder, string runsFol
             var (exit, output, timedOut) = await RunProcessAsync(args, BaseTimeout + PerItemTimeout * itemCount, apply ? CancellationToken.None : ct).ConfigureAwait(false);
             log?.Info($"Invoke-EsCsv {string.Join(' ', args)}: exit {exit}{(timedOut ? " (timeout)" : "")}\n{Trim(output, 4000)}");
             if (timedOut)
-                return ExecutorRun.Failed($"The {what} took too long and was stopped. Check the eStream screen{(apply ? " and History: some items may have been saved" : "")}.", output);
+            {
+                // The script prints one line per finished item: keep those (test 3: item B was saved, but both
+                // rows said "may have been saved").
+                var partial = PartialResults(output);
+                var done = partial.Count > 0 ? $" {partial.Count} item{(partial.Count == 1 ? " was" : "s were")} finished first." : "";
+                return new ExecutorRun(partial,
+                    $"The {what} took too long and was stopped.{done} eStream may still have an item's editor open: in eStream " +
+                    "press Exit and answer No (don't save), then check that item" + (apply ? " and History." : "."), output);
+            }
 
             var results = FindResults(baseName, started, apply);
             if (results is null)
@@ -173,6 +181,31 @@ public sealed class PowerShellChangeExecutor(string engineFolder, string runsFol
             ScriptRunner.EngineLock.Release();
         }
     }
+
+    /// <summary>
+    /// Per-item lines Invoke-EsCsv.ps1 printed before it was stopped, e.g.
+    /// "09:49:13 2999990000028 ZZ TEST ITEM B - DO NOT SELL 1 EACH: Saved Price $98.50->98.00".
+    /// </summary>
+    internal static IReadOnlyList<EngineResult> PartialResults(string output)
+    {
+        var rows = new List<EngineResult>();
+        foreach (var raw in output.Split('\n'))
+        {
+            var m = ItemLine().Match(raw.Trim());
+            if (!m.Success) continue;
+            var rest = m.Groups["rest"].Value.Trim();
+            var colon = rest.LastIndexOf(": ", StringComparison.Ordinal);
+            if (colon < 0) continue;
+            var after = rest[(colon + 2)..].Trim();
+            var status = after.Split(' ', 2)[0];
+            if (status.Length == 0) continue;
+            rows.Add(new EngineResult(m.Groups["upc"].Value, rest[..colon].Trim(), "", status, after));
+        }
+        return rows;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\d\d:\d\d:\d\d\s+(?<upc>\d{3,14})\s+(?<rest>.+)$")]
+    private static partial System.Text.RegularExpressions.Regex ItemLine();
 
     private string? FindResults(string baseName, DateTime startedAfter, bool apply)
     {

@@ -19,14 +19,14 @@ public sealed partial class SqlItemRepository : IItemRepository
 
     internal const string ItemByBarcodeSql = """
         SELECT CAST(i.BarCode AS decimal(18,0)) UPC, RTRIM(i.Description) Description,
-          CAST(i.SellingPrice AS decimal(10,2)) Price, i.PriceMult [For],
-          CAST(i.CaseCost AS decimal(10,2)) CaseCost, i.PacksPerCase, i.UnitsPerPack,
-          CAST(i.CostPerUnit AS decimal(10,4)) UnitCost, ISNULL(i.DepositLink,0) Deposit,
+          CAST(i.SellingPrice AS decimal(19,2)) Price, i.PriceMult [For],
+          CAST(i.CaseCost AS decimal(19,2)) CaseCost, i.PacksPerCase, i.UnitsPerPack,
+          CAST(i.CostPerUnit AS decimal(19,4)) UnitCost, ISNULL(i.DepositLink,0) Deposit,
           ISNULL(d.DollarValue,0) DepositAmt, ISNULL(i.Levy1ID,0) Levy,
           i.Units OnHand, i.MinSOH [Min], i.MaxSOH [Max], i.Sold,
-          CAST(i.StoreGM AS decimal(6,2)) GMpct, i.Inactive, i.LastUpdated,
+          CAST(i.StoreGM AS decimal(19,2)) GMpct, i.Inactive, i.LastUpdated,
           ISNULL(i.MixmatchID,0) MixMatchId, ISNULL(i.CategoryID,0) CategoryId, ISNULL(i.Location,0) Location, ISNULL(i.Bin,0) Bin,
-          RTRIM(i.VendorCode) ShelfCode, i.LastRec, CAST(ISNULL(i.LastCaseCost,0) AS decimal(10,2)) LastCaseCost,
+          RTRIM(i.VendorCode) ShelfCode, i.LastRec, CAST(ISNULL(i.LastCaseCost,0) AS decimal(19,2)) LastCaseCost,
           ISNULL(i.Week1Sales,0) Week1, ISNULL(i.Week2Sales,0) Week2, ISNULL(i.Week3Sales,0) Week3, ISNULL(i.Week4Sales,0) Week4,
           RTRIM(i.CurrentSpecialDesc) CurrentSpecial, ISNULL(i.ysnBackOrdered,0) BackOrdered, i.LastCountDate
         FROM Inventory i LEFT JOIN Deposits d ON d.DepositNum = i.DepositLink
@@ -57,7 +57,7 @@ public sealed partial class SqlItemRepository : IItemRepository
 
     private const string StockReportSelect =
         "SELECT TOP (5001) CAST(BarCode AS decimal(18,0)) UPC, ISNULL(Units,0) OnHand, ISNULL(MinSOH,0) [Min], ISNULL(MaxSOH,0) [Max], " +
-        "ISNULL(Sold,0) Sold, CAST(ISNULL(CostPerUnit,0) AS decimal(10,4)) UnitCost, CAST(ISNULL(SellingPrice,0) AS decimal(10,2)) Price, " +
+        "ISNULL(Sold,0) Sold, CAST(ISNULL(CostPerUnit,0) AS decimal(19,4)) UnitCost, CAST(ISNULL(SellingPrice,0) AS decimal(19,2)) Price, " +
         "ISNULL(PriceMult,1) [For], ISNULL(Inactive,0) Inactive FROM Inventory WHERE (@all = 1 OR ISNULL(Inactive,0) = 0) AND ";
 
     internal const string NegativeStockSql = StockReportSelect + "ISNULL(Units,0) < 0";
@@ -87,7 +87,7 @@ public sealed partial class SqlItemRepository : IItemRepository
 
     internal const string StockSheetLinesSql = """
         SELECT TOP (5001) CAST(a.Invennum AS decimal(18,0)) UPC, ISNULL(a.Units,0) SystemUnits, ISNULL(a.ActualUnits,0) Counted,
-          ISNULL(a.Adjustment,0) Adjustment, CAST(ISNULL(i.CostPerUnit,0) AS decimal(10,4)) UnitCost
+          ISNULL(a.Adjustment,0) Adjustment, CAST(ISNULL(i.CostPerUnit,0) AS decimal(19,4)) UnitCost
         FROM Adjustments a LEFT JOIN Inventory i ON i.BarCode = a.Invennum
         WHERE a.StockSheetID = @sheet
         """;
@@ -95,20 +95,20 @@ public sealed partial class SqlItemRepository : IItemRepository
     // --- what else affects an item's price (read-only) ---------------------------
 
     internal const string MixMatchSql = """
-        SELECT TOP (1) m.MixMatchID, RTRIM(m.MixMatchDesc) Description, CAST(ISNULL(m.MMPrice,0) AS decimal(10,2)) Price
+        SELECT TOP (1) m.MixMatchID, RTRIM(m.MixMatchDesc) Description, CAST(ISNULL(m.MMPrice,0) AS decimal(19,2)) Price
         FROM MixMatch m WHERE m.MixMatchID = @id
         """;
 
     /// <summary>Other active items in a Mix Match group. No Description (slow): names come from the name cache.</summary>
     internal const string MixMatchMembersSql = """
-        SELECT TOP (201) CAST(i.BarCode AS decimal(18,0)) UPC, CAST(ISNULL(i.SellingPrice,0) AS decimal(10,2)) Price, ISNULL(i.PriceMult,1) [For]
+        SELECT TOP (201) CAST(i.BarCode AS decimal(18,0)) UPC, CAST(ISNULL(i.SellingPrice,0) AS decimal(19,2)) Price, ISNULL(i.PriceMult,1) [For]
         FROM Inventory i WHERE i.MixmatchID = @id AND ISNULL(i.Inactive,0) = 0 AND i.BarCode <> @upc
         """;
 
     /// <summary>Special events with this item that haven't ended yet.</summary>
     internal const string ItemSpecialsSql = """
         SELECT TOP (20) s.SpecialID, RTRIM(ISNULL(NULLIF(RTRIM(s.EventTitle),''), s.SpecialDesc)) Title, s.EventStartDate, s.EventEndDate,
-          CAST(ISNULL(d.ProductSpecPrice,0) AS decimal(10,2)) Price, ISNULL(d.ProductSpecialMult,1) [For]
+          CAST(ISNULL(d.ProductSpecPrice,0) AS decimal(19,2)) Price, ISNULL(d.ProductSpecialMult,1) [For]
         FROM SpecialDetail d JOIN SpecialInfo s ON s.SpecialID = d.SpecialID
         WHERE d.ProductBarcode = @upc AND s.EventEndDate >= @today
         ORDER BY s.EventStartDate
@@ -117,7 +117,7 @@ public sealed partial class SqlItemRepository : IItemRepository
     /// <summary>Price batches with this item that haven't been applied.</summary>
     internal const string ItemBatchesSql = """
         SELECT TOP (20) p.PBatchID, p.ApplyOnDate, RTRIM(p.Comment) Comment,
-          CAST(ISNULL(d.NewRetail,0) AS decimal(10,2)) NewPrice, ISNULL(d.NewPriceMult,1) NewFor, CAST(ISNULL(d.NewCaseCost,0) AS decimal(10,2)) NewCaseCost
+          CAST(ISNULL(d.NewRetail,0) AS decimal(19,2)) NewPrice, ISNULL(d.NewPriceMult,1) NewFor, CAST(ISNULL(d.NewCaseCost,0) AS decimal(19,2)) NewCaseCost
         FROM PBDetail d JOIN PBInfo p ON p.PBatchID = d.PBatchID
         WHERE d.IBarcode = @upc AND ISNULL(p.ysnApplied,0) = 0
         ORDER BY p.PBatchID DESC
@@ -134,7 +134,7 @@ public sealed partial class SqlItemRepository : IItemRepository
     /// <summary>A vendor's items with stock levels and units sold since @from (ItemSales by PLU).</summary>
     internal const string OrderLinesSql = """
         SELECT TOP (5001) CAST(i.BarCode AS decimal(18,0)) UPC, RTRIM(vi.ItemVendorCode) VendorCode,
-          CAST(ISNULL(NULLIF(vi.ItemCaseCost,0), i.CaseCost) AS decimal(10,2)) CaseCost,
+          CAST(ISNULL(NULLIF(vi.ItemCaseCost,0), i.CaseCost) AS decimal(19,2)) CaseCost,
           ISNULL(NULLIF(vi.ItemPacksPerCase,0), i.PacksPerCase) PacksPerCase, ISNULL(NULLIF(vi.ItemUnitsPerPack,0), i.UnitsPerPack) UnitsPerPack,
           ISNULL(i.Units,0) OnHand, ISNULL(i.MinSOH,0) [Min], ISNULL(i.MaxSOH,0) [Max], ISNULL(i.MinOrder,0) PackQty,
           ISNULL(i.ysnBackOrdered,0) BackOrdered, ISNULL(vi.ysnDoNotOrder,0) DoNotOrder, ISNULL(i.Inactive,0) Inactive,
@@ -144,21 +144,21 @@ public sealed partial class SqlItemRepository : IItemRepository
         """;
 
     internal const string ItemFactsSql = """
-        SELECT TOP (100001) CAST(i.BarCode AS decimal(18,0)) UPC, ISNULL(i.Units,0) OnHand, CAST(ISNULL(i.CostPerUnit,0) AS decimal(10,4)) UnitCost,
-          CAST(ISNULL(i.SellingPrice,0) AS decimal(10,2)) Price, ISNULL(i.PriceMult,1) [For], CAST(ISNULL(i.CaseCost,0) AS decimal(10,2)) CaseCost,
+        SELECT TOP (100001) CAST(i.BarCode AS decimal(18,0)) UPC, ISNULL(i.Units,0) OnHand, CAST(ISNULL(i.CostPerUnit,0) AS decimal(19,4)) UnitCost,
+          CAST(ISNULL(i.SellingPrice,0) AS decimal(19,2)) Price, ISNULL(i.PriceMult,1) [For], CAST(ISNULL(i.CaseCost,0) AS decimal(19,2)) CaseCost,
           ISNULL(i.PacksPerCase,0) PacksPerCase, ISNULL(i.UnitsPerPack,0) UnitsPerPack, ISNULL(i.CategoryID,0) CategoryId,
-          CAST(ISNULL(i.StoreGM,0) AS decimal(6,2)) GMpct, ISNULL(i.MakeLabel,0) MakeLabel, ISNULL(i.Sold,0) Sold
+          CAST(ISNULL(i.StoreGM,0) AS decimal(19,2)) GMpct, ISNULL(i.MakeLabel,0) MakeLabel, ISNULL(i.Sold,0) Sold
         FROM Inventory i WHERE ISNULL(i.Inactive,0) = 0
         """;
 
     internal const string CategoriesSql = """
         SELECT TOP (2000) c.CategoryID, RTRIM(c.CatDesc) Name, ISNULL(c.DeptNumber,0) DeptNumber, RTRIM(ISNULL(d.DeptDesc,'')) DeptName,
-          CAST(ISNULL(NULLIF(c.TargetGP,0), ISNULL(d.TargetGP,0)) AS decimal(6,2)) TargetGP
+          CAST(ISNULL(NULLIF(c.TargetGP,0), ISNULL(d.TargetGP,0)) AS decimal(19,2)) TargetGP
         FROM Category c LEFT JOIN Departments d ON d.DeptNumber = c.DeptNumber
         """;
 
     internal const string MixMatchListSql = """
-        SELECT TOP (2000) m.MixMatchID, RTRIM(m.MixMatchDesc) Description, CAST(ISNULL(m.MMPrice,0) AS decimal(10,2)) Price,
+        SELECT TOP (2000) m.MixMatchID, RTRIM(m.MixMatchDesc) Description, CAST(ISNULL(m.MMPrice,0) AS decimal(19,2)) Price,
           (SELECT COUNT(*) FROM Inventory i WHERE i.MixmatchID = m.MixMatchID AND ISNULL(i.Inactive,0) = 0) Items
         FROM MixMatch m ORDER BY m.MixMatchID
         """;
@@ -176,7 +176,7 @@ public sealed partial class SqlItemRepository : IItemRepository
         """;
 
     internal const string DailySalesSql = """
-        SELECT TOP (400) CAST(s.PollDate AS date) [Day], SUM(ISNULL(s.Quantity,0)) Qty, CAST(SUM(ISNULL(s.Amount,0)) AS decimal(12,2)) Amount
+        SELECT TOP (400) CAST(s.PollDate AS date) [Day], SUM(ISNULL(s.Quantity,0)) Qty, CAST(SUM(ISNULL(s.Amount,0)) AS decimal(19,2)) Amount
         FROM ItemSales s WHERE s.PLU = @upc AND s.PollDate >= @from
         GROUP BY CAST(s.PollDate AS date) ORDER BY [Day] DESC
         """;
@@ -284,6 +284,19 @@ public sealed partial class SqlItemRepository : IItemRepository
     [GeneratedRegex(@"\b(INSERT|UPDATE|DELETE|MERGE|EXEC|EXECUTE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|DENY|INTO|OPENROWSET|OPENQUERY|BACKUP|RESTORE|DBCC|SHUTDOWN|xp_\w+|sp_\w+)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ForbiddenKeyword();
+
+    internal const string ByShelfCodeSql =
+        "SELECT TOP (10) CAST(BarCode AS decimal(18,0)) UPC FROM Inventory WHERE VendorCode = @code AND ISNULL(Inactive,0) = 0";
+
+    public async Task<IReadOnlyList<long>> FindByShelfCodeAsync(string shelfCode, CancellationToken ct = default)
+    {
+        var code = shelfCode.Trim();
+        var upcs = new List<long>();
+        if (code.Length == 0 || code.Length > 20) return upcs;
+        await QueryAsync(ByShelfCodeSql, cmd => cmd.Parameters.Add(new SqlParameter("@code", SqlDbType.VarChar, 20) { Value = code }),
+            r => upcs.Add((long)Dec(r, "UPC")), ct).ConfigureAwait(false);
+        return upcs;
+    }
 
     public async Task<Item?> GetByBarcodeAsync(long upc, CancellationToken ct = default)
     {

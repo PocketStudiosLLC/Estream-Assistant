@@ -39,8 +39,8 @@ public sealed record ItemFacts
     public decimal CaseCost { get; init; }
     public decimal PacksPerCase { get; init; }
     public decimal UnitsPerPack { get; init; }
-    /// <summary>Case cost ÷ packs per case: what eStream's GM% is based on (see <see cref="Item.PackCost"/>).</summary>
-    public decimal PackCost => Pricing.PricingCalculator.PackCost(CaseCost, PacksPerCase, UnitsPerPack, UnitCost);
+    /// <summary>Cost of one item as sold (see <see cref="Item.SellCost"/>).</summary>
+    public decimal SellCost => Pricing.PricingCalculator.SellCost(CaseCost, PacksPerCase, UnitsPerPack, UnitCost);
     public int CategoryId { get; init; }
     public decimal GmPct { get; init; }
     /// <summary>Inventory.MakeLabel: eStream has this item flagged for a new shelf label.</summary>

@@ -38,6 +38,14 @@ public sealed class MockItemRepository : IItemRepository
         lock (_items) return _items.GetValueOrDefault(upc);
     }
 
+    public async Task<IReadOnlyList<long>> FindByShelfCodeAsync(string shelfCode, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        var code = shelfCode.Trim();
+        lock (_items) return _items.Values.Where(i => !i.Inactive && i.ShelfCode.Trim().Equals(code, StringComparison.OrdinalIgnoreCase))
+            .Select(i => i.Upc).Take(10).ToList();
+    }
+
     public async Task<IReadOnlyList<ItemName>> GetAllNamesAsync(CancellationToken ct = default)
     {
         await Task.Delay(Delay, ct).ConfigureAwait(false);
@@ -365,7 +373,7 @@ public sealed class MockItemRepository : IItemRepository
                 Sold = Dec("Sold"),
                 Inactive = Dec("Inactive") != 0,
                 GmPct = Pricing.PricingCalculator.GrossMarginPct(price / Math.Max(1, (int)Dec("PriceMult")),
-                    Pricing.PricingCalculator.PackCost(Dec("CaseCost"), Dec("PacksPerCase"), Dec("UnitsPerPack"), unitCost)),
+                    Pricing.PricingCalculator.EStreamGmCost(Dec("CaseCost"), Dec("PacksPerCase"), Dec("UnitsPerPack"), unitCost)),
             });
         }
         return items;
@@ -438,7 +446,7 @@ public sealed class MockItemRepository : IItemRepository
             Min = min,
             Max = max,
             Sold = sold,
-            GmPct = Pricing.PricingCalculator.GrossMarginPct(price / @for, Pricing.PricingCalculator.PackCost(caseCost, packs, units, unitCost)),
+            GmPct = Pricing.PricingCalculator.GrossMarginPct(price / @for, Pricing.PricingCalculator.EStreamGmCost(caseCost, packs, units, unitCost)),
             Inactive = inactive,
             LastUpdated = new DateTime(2026, 11, 1, 9, 0, 0),
             MixMatchId = mixMatch,

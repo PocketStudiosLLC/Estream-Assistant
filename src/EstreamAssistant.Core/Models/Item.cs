@@ -17,11 +17,10 @@ public sealed record Item
     public decimal UnitsPerPack { get; init; }
     public decimal UnitCost { get; init; }
     /// <summary>
-    /// Cost of one pack = one item sold at the till: case cost ÷ packs per case. eStream's GM% and the price batch's
-    /// "Cost / pk" use this, NOT CostPerUnit (test 2: a 1 × 12 item at $99 with case $12 shows GM 87.9%, not 99%).
-    /// Units per pack only splits a pack for stock (manual: "normally 1", e.g. drinks per bottle).
+    /// Cost of one item as the store sells it (case cost ÷ packs × units): what the app's GM% and prices use.
+    /// eStream's own GM% (<see cref="GmPct"/>) divides by packs only, so it differs for "1 × N" items.
     /// </summary>
-    public decimal PackCost => Pricing.PricingCalculator.PackCost(CaseCost, PacksPerCase, UnitsPerPack, UnitCost);
+    public decimal SellCost => Pricing.PricingCalculator.SellCost(CaseCost, PacksPerCase, UnitsPerPack, UnitCost);
     /// <summary>Deposit code (Deposits.DepositNum), 0 = none.</summary>
     public int Deposit { get; init; }
     public decimal DepositAmount { get; init; }

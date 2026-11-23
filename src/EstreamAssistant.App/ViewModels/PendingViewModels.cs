@@ -88,13 +88,13 @@ public sealed partial class ItemEditViewModel : ObservableObject
     /// <summary>Fills Price from the unit cost with the default markup/margin and price endings.</summary>
     public void PriceFromCost()
     {
-        // Per pack (one item sold at the till), as eStream's GM: case cost ÷ packs per case.
-        var unit = Item.PackCost;
+        // Per item as sold: case cost ÷ (packs × units).
+        var unit = Item.SellCost;
         if (unit <= 0) { Message = "This item has no cost in eStream."; return; }
         int qty = int.TryParse(For, out var f) && f >= 1 ? f : Item.For;
         var r = PricingCalculator.Calculate(unit * qty, _settings.DefaultPricingMode, _settings.DefaultMarkupPct, _settings.PriceEndings);
         Price = r.Price.ToString("0.00", CultureInfo.InvariantCulture);
-        Message = $"Cost per pack {unit:C} × {qty} with {PriceFromCostLabel.ToLowerInvariant()} = {r.Price:C} (GM {r.GmPct:0.#}%).";
+        Message = $"Cost per item {unit:C} × {qty} with {PriceFromCostLabel.ToLowerInvariant()} = {r.Price:C} (GM {r.GmPct:0.#}%).";
     }
 
     /// <summary>Builds the request, or returns an error message for the owner.</summary>

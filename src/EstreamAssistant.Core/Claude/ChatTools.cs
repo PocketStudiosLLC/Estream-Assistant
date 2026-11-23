@@ -83,7 +83,7 @@ public static class ChatTools
             "Returns the exact price, the price rounded to the cent, the final price (after the store's price-ending rule if apply_endings is true) and the GM%.",
             """
             {"type":"object","properties":{
-              "cost":{"type":"number","description":"Cost of ONE item sold at the till (lookup_item's pack_cost = case cost / packs per case; eStream's GM uses this), times the For quantity for a 'N for' price. Dollars, excluding deposit and eco fees."},
+              "cost":{"type":"number","description":"Cost of ONE item sold at the till (lookup_item's sell_cost = case cost / (packs per case x units per pack)), times the For quantity for a 'N for' price. Dollars, excluding deposit and eco fees."},
               "mode":{"type":"string","enum":["markup","margin"]},
               "pct":{"type":"number","description":"The markup or margin percent, e.g. 30 for 30%."},
               "apply_endings":{"type":"boolean","description":"true to round up to the store's price endings (e.g. .49/.99) from Settings."}
@@ -206,7 +206,7 @@ public static class ChatTools
             """, Strict: false),
         new(ShowReceiptLines,
             "Receipts: put the lines you read from the attached receipt or invoice into the owner's receipt table. " +
-            "The app matches each line to an eStream item (UPC first, then name) and works out the unit cost itself " +
+            "The app matches each line's code to an eStream item as a UPC AND as the store's Shelf Code (e.g. Costco item numbers), then by name and works out the unit cost itself " +
             "(case price / (packs per case x units per pack)). Copy numbers exactly as printed; NEVER invent or guess a number: " +
             "if any part of a line can't be read for sure, send it with readable=false. Leave out tax, totals, discounts, deposit and eco-fee lines. " +
             "Sending a line number again replaces that line (use this with upc set after the owner picks the item). Changes nothing in eStream.",

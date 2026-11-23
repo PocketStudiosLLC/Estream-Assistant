@@ -67,6 +67,16 @@ public sealed class ClaudeChatService : IChatService
     private string? _clientKey;
     /// <summary>Model of the last completed turn (a switch means a cold cache, not a problem).</summary>
     private string? _lastModel;
+    /// <summary>When the last request was answered: the prompt cache lives about 5 minutes.</summary>
+    private DateTime _lastResponse = DateTime.MinValue;
+    internal static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Set by the app: a one-line summary of what is on screen NOW (pending list, count list, receipt), added to
+    /// every owner message. Test 3: Claude said rows were "already in Pending changes" after the owner had cleared
+    /// the list, because nothing told it so.
+    /// </summary>
+    public Func<string?> StateSnapshot { get; set; } = () => null;
 
     /// <summary>Tests only: send requests to a local fake server instead of the real API.</summary>
     internal string? BaseUrlOverride { get; init; }
@@ -153,7 +163,8 @@ public sealed class ClaudeChatService : IChatService
             if (_settings.DebugLogging) _log?.Info($"[debug] Owner: {ownerText}");
             var route = RouteFor(_settings, attachments.Count);
             // A warm cache only exists for the model the previous turn used.
-            bool warm = snapshot > 0 && _lastModel == route.Model;
+            // ...and only for about 5 minutes after the last request (test 3 warned after a 19-minute gap).
+            bool warm = snapshot > 0 && _lastModel == route.Model && DateTime.Now - _lastResponse < CacheLifetime;
             if (snapshot > 0 && _lastModel is not null && _lastModel != route.Model)
                 _log?.Info($"Switching model {_lastModel} -> {route.Model}{(route.IsReceipt ? " (receipt)" : "")}; this message writes a fresh cache.");
             if (attachments.Count > 0)
@@ -172,8 +183,9 @@ public sealed class ClaudeChatService : IChatService
                 cacheRead += sample.CacheReadTokens;
                 // Spec 7.1: on a warm conversation the cached prefix should be read back.
                 if ((warm || round > 0) && sample.CacheReadTokens == 0)
-                    _log?.Warn("Prompt cache: 0 tokens read on a warm conversation (something before the cache breakpoint changed, or the cache expired).");
-                _log?.Info($"Claude {model}: stop={msg.StopReason} in={sample.InputTokens} out={sample.OutputTokens} " +
+                    _log?.Warn("Prompt cache: 0 tokens read on a warm conversation (something before the cache breakpoint changed).");
+                _lastResponse = DateTime.Now;
+                _log?.Info($"Claude {model} ({(route.IsReceipt ? "receipt" : "chat")}, effort {route.Effort}): stop={msg.StopReason} in={sample.InputTokens} out={sample.OutputTokens} " +
                            $"cache_read={sample.CacheReadTokens} cache_write={sample.CacheWriteTokens} est=${cost:0.0000}");
 
                 var stop = msg.StopReason?.Raw();
@@ -318,6 +330,10 @@ public sealed class ClaudeChatService : IChatService
                 _notes.Clear();
             }
         }
+        string? state = null;
+        try { state = StateSnapshot(); }
+        catch (Exception ex) { _log?.Error("App state for Claude failed", ex); }
+        if (!string.IsNullOrWhiteSpace(state)) content.Add(new BetaTextBlockParam { Text = "[app now] " + state });
         content.Add(new BetaTextBlockParam { Text = ownerText });
         return content;
     }

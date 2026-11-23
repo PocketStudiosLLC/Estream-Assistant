@@ -45,19 +45,18 @@ public sealed class Test2FixesTests : IDisposable
         Assert.True(ChangeValidator.Validate(ItemB with { For = 3 }, new ChangeRequest { Upc = "2999990000028", CaseCost = 12.50m }, Codes, false).IsValid);
     }
 
-    // --- GM on the cost per pack (B2/B5: rows said 99%, eStream 87.9%) ---------------------
+    // --- GM: the app uses the cost per item sold; eStream's own GM divides by packs only ---------
 
     [Fact]
-    public void Gm_uses_the_cost_per_pack_like_estream()
+    public void Sell_cost_is_per_unit_and_estream_gm_cost_is_per_pack()
     {
         var a = ItemB with { Upc = 2999990000011, Price = 99.00m, For = 1 };
-        Assert.Equal(12.00m, a.PackCost);
-        Assert.Equal(87.88m, Core.Pricing.PricingCalculator.GrossMarginPct(a.Price, a.PackCost));
-        // eStream's price batch log: "batch: price 99.00 for 1, case cost 12.50, GM 87.37%".
+        Assert.Equal(1.00m, a.SellCost);
+        // eStream's price batch log: "batch: price 99.00 for 1, case cost 12.50, GM 87.37%" (what the mocks copy).
         Assert.Equal(87.37m, Core.Pricing.PricingCalculator.GrossMarginPct(99.00m,
-            Core.Pricing.PricingCalculator.PackCost(12.50m, 1, 12, 0)));
-        // No case cost or pack count: unit cost × units per pack.
-        Assert.Equal(12.00m, Core.Pricing.PricingCalculator.PackCost(0, 0, 12, 1.00m));
+            Core.Pricing.PricingCalculator.EStreamGmCost(12.50m, 1, 12, 0)));
+        // No case cost: the stored unit cost.
+        Assert.Equal(1.25m, Core.Pricing.PricingCalculator.SellCost(0, 0, 12, 1.25m));
     }
 
     // --- Publish-EsStockSheet output (A6: exit 0 on "POSTED BUT CHECK") ------------------------
@@ -114,5 +113,116 @@ public sealed class Test2FixesTests : IDisposable
         // One item at 0 is fine when the sheet has other counts.
         await counts.AddAsync([new CountInput("60410079966", 3)], addToExisting: false);
         Assert.True((await counts.CreateSheetAsync(null, "mixed")).Ok);
+    }
+}
+
+/// <summary>Fixes from the store PC's test 3 (v0.1.7, 2026-11-23).</summary>
+public sealed class Test3FixesTests : IDisposable
+{
+    private readonly TempDir _dir = new();
+    public void Dispose() => _dir.Dispose();
+
+    [Fact]
+    public void A_timed_out_save_keeps_the_items_the_script_finished()
+    {
+        var output = "09:47:50 === assistant_20261123-094737.csv (SAVING)\n" +
+                     "09:49:13 2999990000028 ZZ TEST ITEM B - DO NOT SELL 1 EACH: Saved Price $98.50->98.00 \n";
+        var rows = PowerShellChangeExecutor.PartialResults(output);
+        var r = Assert.Single(rows);
+        Assert.Equal("2999990000028", r.Upc);
+        Assert.Equal("Saved", r.Status);
+        Assert.Equal(RowStatus.Applied, r.MappedStatus);
+        Assert.Empty(PowerShellChangeExecutor.PartialResults("09:47:36 Done: DryRun=2  -> C:\\x.csv\n"));
+    }
+
+    [Fact]
+    public void Old_default_timeouts_move_to_the_new_ones_but_owner_values_stay()
+    {
+        var old = new Core.Settings.AppSettings { ScriptTimeoutBaseSeconds = 60, ScriptTimeoutPerItemSeconds = 30 }.Migrate();
+        Assert.Equal((120, 90), (old.ScriptTimeoutBaseSeconds, old.ScriptTimeoutPerItemSeconds));
+        var own = new Core.Settings.AppSettings { ScriptTimeoutBaseSeconds = 300, ScriptTimeoutPerItemSeconds = 45 }.Migrate();
+        Assert.Equal((300, 45), (own.ScriptTimeoutBaseSeconds, own.ScriptTimeoutPerItemSeconds));
+        var path = Path.Combine(_dir.Path, "s.json");
+        own.Save(path);
+        var again = Core.Settings.AppSettings.Load(path);
+        again.ScriptTimeoutBaseSeconds = 60;
+        Assert.Equal(60, again.Migrate().ScriptTimeoutBaseSeconds); // already migrated: an owner's 60 stays
+    }
+
+    private sealed class HalfMadeSheets : IStockSheetExecutor
+    {
+        public bool IsMock => false;
+        public Task<SheetRun> CheckAsync(string countsCsv, CancellationToken ct) => Task.FromResult(new SheetRun(true, "", ""));
+        public Task<SheetRun> CreateSheetAsync(string countsCsv, string comment, CancellationToken ct) =>
+            Task.FromResult(new SheetRun(false, "Making the sheet failed (exit code 1). Sheet 10763 does not match the CSV: sheet has 1 lines, expected 2",
+                "Created stock sheet 10763\nPROBLEM on sheet 10763", 10763));
+        public Task<SheetRun> PostDryRunAsync(int sheetId, CancellationToken ct) => Task.FromResult(new SheetRun(true, "", ""));
+        public Task<SheetRun> PostAsync(int sheetId, CancellationToken ct) => Task.FromResult(new SheetRun(true, "", ""));
+    }
+
+    [Fact]
+    public async Task A_sheet_the_script_made_wrong_is_never_postable()
+    {
+        var repo = new MockItemRepository { Delay = TimeSpan.Zero };
+        var lookup = new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n.json")));
+        var counts = new StockCounts(lookup, new HalfMadeSheets(), () => [], _dir.Path) { ConfirmCreate = (_, _, _) => Task.FromResult(true) };
+        await counts.AddAsync([new CountInput("60410079591", 5), new CountInput("60410079966", 3)], addToExisting: false);
+        var run = await counts.CreateSheetAsync(null, "receipt");
+        Assert.False(run.Ok);
+        Assert.Contains("DON'T post", run.Message);
+        var sheet = Assert.Single(counts.Sheets);
+        Assert.True(sheet.Failed);
+        Assert.NotNull(counts.PostBlockedReason(10763));
+        Assert.False(counts.HasSheetFor(counts.Rows));   // the same counts can go on a new sheet
+    }
+
+    [Fact]
+    public async Task Receipt_codes_match_shelf_codes_and_ambiguous_codes_ask()
+    {
+        var repo = new MockItemRepository { Delay = TimeSpan.Zero };
+        var lookup = new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n.json")));
+        var lays = (await repo.GetByBarcodeAsync(60410079591))!;
+        var receipt = new Core.Receipts.ReceiptSession(lookup, () => []);
+        await receipt.SetLinesAsync("Costco", [
+            new Core.Receipts.ReceiptLineInput { Line = 1, Text = "KS CHIPS", Code = lays.ShelfCode, Qty = 1, CasePrice = 50m },
+        ]);
+        var line = Assert.Single(receipt.Lines);
+        Assert.Equal(60410079591, line.Item?.Upc);
+        Assert.Equal("shelf code", line.MatchedBy);
+
+        // A code that is one item's UPC and another item's shelf code: the owner picks.
+        repo.SimulateEngineSave(lays with { ShelfCode = "4011" });
+        await receipt.SetLinesAsync("Costco", [new Core.Receipts.ReceiptLineInput { Line = 1, Text = "HALF HALF", Code = "4011", Qty = 1, CasePrice = 5m }]);
+        line = Assert.Single(receipt.Lines);
+        Assert.Null(line.Item);
+        Assert.Equal(2, line.Candidates.Count);
+        Assert.Contains("matches 2 items", line.Warnings[0]);
+    }
+
+    [Fact]
+    public async Task Claude_gets_the_lists_as_they_are_now()
+    {
+        var repo = new MockItemRepository { Delay = TimeSpan.Zero };
+        var lookup = new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n.json")));
+        var pending = new PendingChanges(lookup, new MockChangeExecutor(repo, _dir.Path));
+        var counts = new StockCounts(lookup, new MockStockSheetExecutor(repo), () => [], _dir.Path);
+        var note = Core.Claude.AppStateNote.Describe(pending, counts, null, 4);
+        Assert.Contains("Pending changes: EMPTY.", note);
+        Assert.Contains("Count list: EMPTY.", note);
+        Assert.Contains("4+", note);
+        await pending.StageAsync([new ChangeRequest { Upc = "60410079591", Price = 4.50m }]);
+        Assert.Contains("Pending changes (1): LAYS ALL DRESS", Core.Claude.AppStateNote.Describe(pending, counts, null, 4));
+    }
+}
+
+public class Test3SheetRegistryTests
+{
+    [Fact]
+    public void A_sheet_saved_by_an_older_version_with_a_problem_is_marked_failed()
+    {
+        var old = new StockSheetRecord { SheetId = 10763, LastOutput = "Created stock sheet 10763\nPROBLEM on sheet 10763: Sheet 10763 does not match the CSV\n" };
+        Assert.True(StockCounts.MarkIfFailed(old).Failed);
+        Assert.False(StockCounts.MarkIfFailed(old with { LastOutput = "Created stock sheet 10762" }).Failed);
+        Assert.False(StockCounts.MarkIfFailed(old with { Posted = true }).Failed);
     }
 }

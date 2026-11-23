@@ -56,23 +56,30 @@ Report: `complete/` (gitignored). Price batch import/apply, item editor SAVE, re
 label queueing, the large-change stop and Claude asking before receipt_stock_sheet all worked on the TEST items.
 Timings: batch import ~16 s + 9 s/line, apply ~22 s; item editor ~14 s check + ~19 s save per item.
 
-## v0.1.7 (fixes from test 2): run `docs/test3.txt` on the store PC
-- [ ] GM% in pending rows, receipt lines and the margin report matches eStream (cost per pack = case cost ÷ packs).
-- [ ] Receipt "30% margin" prices from the pack cost.
-- [ ] "N for" price that doesn't split into cents is skipped with prices that work.
-- [ ] 2 price changes go through the item editor (batches only from 4 items); write down the times.
-- [ ] Claude describes a cancelled SAVE and a stopped SAVE correctly; both are in the app log.
-- [ ] A stock sheet whose counts add up to 0 is refused; a real POST still shows "POSTED OK".
-- [ ] No red MOCK warning with Data source = Sql / Dry runs = PowerShell.
-- [ ] Owner: preview a "2 for" label (does it show the price?), remove the 4 TEST labels, decide on open sheet 10761.
-- [ ] Real items: check a few items' Packs/Case and Units/Pack in eStream. If many real items have units per pack > 1
-      for things sold one at a time, the receipt's received units (cases × packs × units) need another look.
+## v0.1.7: tested in test 3 (2026-11-23)
+Passed: "N for" rule, 4+ batch routing, zero-count sheet refusal, PDF receipts, Receipts folder, file picker, stock
+reports (match SQL, active items), stock_report tool, Export CSV, Test connection, choice buttons, prompt cache, PAD button.
+Found and fixed in v0.1.8: GM per pack wrong for the store's 3496 "1 × N" items, margin report SQL overflow, SAVE
+timeout too short when eStream Server is busy, a half-made stock sheet shown as fine, Claude not knowing lists were
+cleared, receipt codes that are shelf codes (Costco).
+
+## v0.1.8: run `docs/test4.txt` on the store PC
+- [ ] Item B back to 98.50 for 2 (test 3 left it at 98.00).
+- [ ] GM on "1 × N" items (COCA-COLA 6782900 ~79.6%) and the eStream note on the item card; margin reports run.
+- [ ] Claude: empty lists said empty; 2 prices staged without "already" or a batch promise.
+- [ ] SAVE timings with 120 s + 90 s/item; settings.json migrated.
+- [ ] Test 3 leftovers: SAVE notes (step 4), receipt → sheet → POST with the fixed Publish script's RESULT line,
+      Invoke-EsCsv moving an Inbox file, "save the changes now" refused, optional real-item dry run.
+- [ ] Costco receipt: shelf-code matches, 1019 asks to pick, negative on-hand warning, sheet 10763 marked NOT RIGHT.
+- [ ] Owner: pack-size questions (Coke 1 × 32, cigarettes 1 × 10, concrete 1 × 56), labels, sheets 10761/10763,
+      scanner, drag and drop, phone photos, print, scaling, a real invoice.
+- [ ] Why MINI BELLA MUSHROOMS 771163002506 was left off sheet 10763 by New-EsStockSheet.ps1.
 
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).
-- [ ] Publish-EsStockSheet.ps1: give it a RESULT line and exit 1 on "POSTED BUT CHECK" (test 3 step 6; the app
-      already reads "POSTED OK" / "DRY RUN:" and a RESULT line when there is one).
-- [ ] Invoke-EsCsv.ps1 -Path leaves the CSV in Inbox (the app isn't affected: it uses its own runs folder).
+- [x] Publish-EsStockSheet.ps1 RESULT line + exit 1, Invoke-EsCsv.ps1 moving Inbox files (done on the store PC in
+      test 3, Handoff-Test3\FIX-NOTES.txt; on-screen run in test 4).
+- [ ] Zero stock report: capped at 5000 rows sorted by sold, so the top is odd items. Maybe sort or filter better.
 - [ ] Import-EsPriceBatch.ps1: a clearer per-line status than "DryRunOK" for lines in a real pending batch (the app copes as it is).
 - [ ] Power Automate Desktop executor (optional; needs a non-interactive flow).
 - [ ] Lookups through `Get-EsItem.ps1` when SQL is down.

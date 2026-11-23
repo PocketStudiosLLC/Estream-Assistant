@@ -15,6 +15,12 @@ public interface IItemRepository
     /// <summary>Exact BarCode match only. Fallbacks live in <see cref="ItemLookupService"/>.</summary>
     Task<Item?> GetByBarcodeAsync(long upc, CancellationToken ct = default);
 
+    /// <summary>
+    /// UPCs of active items whose Shelf Code (Inventory.VendorCode) is exactly <paramref name="shelfCode"/>. Test 3:
+    /// Costco receipt item numbers are the store's shelf codes, not UPCs.
+    /// </summary>
+    Task<IReadOnlyList<long>> FindByShelfCodeAsync(string shelfCode, CancellationToken ct = default);
+
     /// <summary>All item names for the local cache. SLOW on the store PC (~16 s).</summary>
     Task<IReadOnlyList<ItemName>> GetAllNamesAsync(CancellationToken ct = default);
 

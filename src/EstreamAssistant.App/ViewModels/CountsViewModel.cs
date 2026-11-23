@@ -27,7 +27,8 @@ public sealed class SheetViewModel(StockSheetRecord s, string? postBlocked)
     public string Title => (Record.IsMock ? "TEST sheet " : "Sheet ") + (Record.SheetId?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)");
     public string Detail => $"{Record.Rows} item{(Record.Rows == 1 ? "" : "s")} · made {Record.Created:MMM d, h:mm tt}"
         + (Record.Comment.Length > 0 ? $" · {Record.Comment}" : "")
-        + (Record.Posted ? $" · POSTED {Record.PostedTime:MMM d, h:mm tt}" : "");
+        + (Record.Posted ? $" · POSTED {Record.PostedTime:MMM d, h:mm tt}" : "")
+        + (Record.Failed ? " · NOT RIGHT: don't post, delete it in eStream" : "");
     public bool IsPosted => Record.Posted;
     public bool NeedsNumber => Record.SheetId is null;
     public bool CanPost => postBlocked is null;

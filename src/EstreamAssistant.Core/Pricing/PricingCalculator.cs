@@ -44,10 +44,21 @@ public static class PricingCalculator
 
     /// <summary>GM% = (price - cost) / price x 100, rounded to 2 places. 0 when price is 0.</summary>
     /// <summary>
-    /// Cost of one pack (one item sold at the till) as eStream works it out for GM%: case cost ÷ packs per case.
-    /// Without a case cost or pack count: unit cost × units per pack.
+    /// Cost of ONE item as the store sells it: case cost ÷ (packs per case × units per pack), else the stored unit cost.
+    /// The store sets up most single items as "1 pack × N units" (test 3: 3496 active items, e.g. COCA-COLA 1 × 32 at
+    /// $2.25, SNICKERS 1 × 24 at $2.00) and sells them one unit at a time, so this is the cost the GM% has to use.
     /// </summary>
-    public static decimal PackCost(decimal caseCost, decimal packsPerCase, decimal unitsPerPack, decimal unitCost) =>
+    public static decimal SellCost(decimal caseCost, decimal packsPerCase, decimal unitsPerPack, decimal unitCost)
+    {
+        var units = packsPerCase * Math.Max(1, unitsPerPack);
+        return caseCost > 0 && units > 0 ? Math.Round(caseCost / units, 4, MidpointRounding.AwayFromZero) : unitCost;
+    }
+
+    /// <summary>
+    /// The cost eStream's own GM% (StoreGM, the price batch's "New GM%") uses: case cost ÷ packs per case, ignoring
+    /// units per pack. For a "1 × 32" item that is the whole case, so eStream shows 0% or a negative GM there.
+    /// </summary>
+    public static decimal EStreamGmCost(decimal caseCost, decimal packsPerCase, decimal unitsPerPack, decimal unitCost) =>
         caseCost > 0 && packsPerCase > 0
             ? Math.Round(caseCost / packsPerCase, 4, MidpointRounding.AwayFromZero)
             : unitCost * Math.Max(1, unitsPerPack);

@@ -39,6 +39,12 @@ public sealed record StockSheetRecord
     /// <summary>Made by the mock engine: a TEST sheet that never touched eStream.</summary>
     public bool IsMock { get; init; }
     public string LastOutput { get; init; } = "";
+    /// <summary>
+    /// The script made the sheet but it doesn't match the counts (test 3: "sheet has 9 lines, expected 10"). It is left
+    /// open in eStream and must never be posted from the app.
+    /// </summary>
+    public bool Failed { get; init; }
+    public string Problem { get; init; } = "";
 }
 
 public sealed record SheetRun(bool Ok, string Message, string Output, int? SheetId = null);
@@ -123,7 +129,7 @@ public sealed class StockCounts
             _draftFile = Path.Combine(dataFolder, "counts-draft.json");
             _registryFile = Path.Combine(dataFolder, executor.IsMock ? "stock-sheets-mock.json" : "stock-sheets.json");
             _rows = Load<List<CountRow>>(_draftFile) ?? [];
-            _sheets = Load<List<StockSheetRecord>>(_registryFile) ?? [];
+            _sheets = (Load<List<StockSheetRecord>>(_registryFile) ?? []).Select(MarkIfFailed).ToList();
         }
     }
 
@@ -313,7 +319,7 @@ public sealed class StockCounts
         var csv = CountsCsv.Write(rows);
         var hash = CountsCsv.Hash(csv);
         StockSheetRecord? dup;
-        lock (_gate) dup = _sheets.FirstOrDefault(s => s.CountsHash == hash);
+        lock (_gate) dup = _sheets.FirstOrDefault(s => s.CountsHash == hash && !s.Failed);
         if (dup is not null)
             return new(false, $"These exact counts were already imported into sheet {dup.SheetId?.ToString() ?? "(number unknown)"} on {dup.Created:MMM d}. " +
                               "Imports add up in eStream, so the app won't import them again.", "");
@@ -336,11 +342,23 @@ public sealed class StockCounts
             CountsCsv = csv,
             IsMock = _executor.IsMock,
             LastOutput = Clip(run.Output),
+            Failed = !run.Ok && run.SheetId is not null,
+            Problem = !run.Ok && run.SheetId is not null ? run.Message : "",
         };
         lock (_gate) _sheets.Add(record);
         SaveRegistry();
-        _log?.Info($"Stock sheet created: {record.SheetId?.ToString() ?? "number unknown"} ({rows.Count} items, mock={record.IsMock}).");
         Raise();
+        if (record.Failed)
+        {
+            _log?.Warn($"Stock sheet {record.SheetId} was made but is NOT right ({rows.Count} counts): {run.Message}");
+            return run with
+            {
+                Ok = false,
+                Message = $"Sheet {record.SheetId} was made in eStream but it isn't right, so DON'T post it: {run.Message.TrimEnd('.')}. " +
+                          $"Delete sheet {record.SheetId} in eStream (Inventory > Stock Sheets), then try again.",
+            };
+        }
+        _log?.Info($"Stock sheet created: {record.SheetId?.ToString() ?? "number unknown"} ({rows.Count} items, mock={record.IsMock}).");
         return run.SheetId is null
             ? run with { Ok = false, Message = "The sheet was made, but its number wasn't in the script output. Look it up in eStream, then use \"Enter number\" on the sheet." }
             : run;
@@ -350,7 +368,7 @@ public sealed class StockCounts
     public bool HasSheetFor(IReadOnlyList<CountRow> rows)
     {
         var hash = CountsCsv.Hash(CountsCsv.Write(rows));
-        lock (_gate) return _sheets.Any(s => s.CountsHash == hash);
+        lock (_gate) return _sheets.Any(s => s.CountsHash == hash && !s.Failed);
     }
 
     /// <summary>For a sheet whose number the script didn't report: the owner types it from eStream.</summary>
@@ -378,6 +396,7 @@ public sealed class StockCounts
         lock (_gate) s = _sheets.FirstOrDefault(x => x.SheetId == id);
         if (s is null) return $"Sheet {id} wasn't made by this app, so it can't be posted here.";
         if (s.Posted) return $"Sheet {id} was already posted on {s.PostedTime:MMM d}.";
+        if (s.Failed) return $"Sheet {id} isn't right ({s.Problem.TrimEnd('.')}). Don't post it: delete it in eStream.";
         if (s.CountsCsv is { Length: > 0 } csv && CountsCsv.Parse(csv).Rows is { Count: > 0 } lines && lines.Sum(l => l.Count) == 0)
             return ZeroTotalReason;
         if (s.IsMock != _executor.IsMock) return s.IsMock ? "This is a TEST sheet from the mock engine." : "This sheet was made with the real engine; switch back to PowerShell to post it.";
@@ -478,6 +497,17 @@ public sealed class StockCounts
             File.Move(tmp, path, overwrite: true);
         }
         catch (IOException ex) { _log?.Error("Saving " + Path.GetFileName(path) + " failed", ex); }
+    }
+
+    /// <summary>
+    /// Sheets saved by v0.1.7 and older before failed sheets were recognised: New-EsStockSheet.ps1 prints
+    /// "PROBLEM on sheet N: ..." when the sheet doesn't match the counts (test 3, sheet 10763).
+    /// </summary>
+    internal static StockSheetRecord MarkIfFailed(StockSheetRecord s)
+    {
+        if (s.Failed || s.Posted) return s;
+        var line = s.LastOutput.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("PROBLEM on sheet", StringComparison.OrdinalIgnoreCase));
+        return line is null ? s : s with { Failed = true, Problem = line };
     }
 
     private static T? Load<T>(string path)

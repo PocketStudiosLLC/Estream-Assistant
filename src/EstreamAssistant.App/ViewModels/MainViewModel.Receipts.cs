@@ -232,7 +232,7 @@ public sealed partial class MainViewModel
         if (_receipt is null || _counts is null) return;
         var (run, rc) = await Task.Run(() => _receipt.MakeStockSheetAsync(_counts, []));
         var text = run.Message;
-        if (run.SheetId is int id)
+        if (run.Ok && run.SheetId is int id)
             text = $"Stock sheet {id} made from the receipt ({rc.Rows.Count} item{(rc.Rows.Count == 1 ? "" : "s")}). The stock isn't added yet: " +
                    "post the sheet on the Stock counts tab (post check, then type the number)." +
                    (rc.Problems.Count > 0 ? "\nLeft out: " + string.Join("\n", rc.Problems) : "");

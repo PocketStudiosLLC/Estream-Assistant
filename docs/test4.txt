@@ -1,0 +1,134 @@
+eStream Assistant - Test 4: checks after installing v0.1.8
+============================================================
+Give this whole file to Claude Code on the store's back-office PC. Start Claude Code in C:\eStreamAutomation
+with eStream Office open and logged in. This follows test 3: read Done\test3-report.txt and
+Handoff-Test3\FIX-NOTES.txt first.
+
+Who you are working with: the store owner. They know eStream well but aren't technical. Plain words, one step
+at a time, say exactly what to click. You can drive the app yourself (Windows UI Automation, as in tests 2 and 3)
+when the owner agrees. Steps marked OWNER need the owner's hands or eyes; if they're busy, skip those and list
+them as "not done".
+
+Why this test: v0.1.8 fixes what test 3 found: GM% for real "1 x N" items, the margin report overflow, the SAVE
+time limit, a wrong stock sheet shown as fine (Costco sheet 10763), Claude not knowing the lists were cleared, and
+receipt codes that are shelf codes. It also finishes the test 3 steps that were stopped when eStream got slow.
+
+
+SAFETY RULES (same as before, they never change)
+- SQL is READ-ONLY: SELECT only (sqlcmd -K ReadOnly or Get-EsItem.ps1).
+- Only change the TEST records: item A 2999990000011, item B 2999990000028. Never NUTRL 627843437147 or any
+  real item. Real items: lookups, reports and receipts only - never stage, save, or put them on a stock sheet.
+- Never touch the owner's stock sheets 10749, 10750, 10754 (and 10758, not ours) or price batches 10208, 10209,
+  10210. Sheet 10763 (Costco, real items) must NOT be posted.
+- Never clear or print the label queue. Only the owner removes labels.
+- Applying a price batch, saving and posting a stock sheet have NO UNDO. Ask the owner at the start whether
+  "yes to all tests on the TEST items" still holds today; otherwise ask before each one.
+- eStream SLOW? Test 3 found eStream Server (eStreamServer.exe) running a long "UPDATE [Products] ..." that made
+  every lookup and script slow for minutes. Before steps that drive eStream, check a lookup in the app takes under
+  a few seconds. If it's slow, wait and check again; don't start a SAVE or a post while it's slow.
+
+
+0. INSTALL, PUT ITEM B BACK, LEFTOVERS
+--------------------------------------
+- Install eStreamAssistant-Setup-0.1.8.exe (no admin rights; "Windows protected your PC" -> More info -> Run
+  anyway). Start the app: title 0.1.8; the log has "Starting eStream Assistant 0.1.8", Sql, PowerShell scripts,
+  "for 4+ price/cost-only rows". No red MOCK message.
+- Settings: with the owner's OK fill in
+    Protected sheets: 10749, 10750, 10754, 10758      Protected batches: 10208, 10209, 10210
+  and press Save. (Test 3 found both empty. The app never posts or applies anything it didn't make anyway.)
+  Then open %LOCALAPPDATA%\eStreamAssistant\settings.json (read only): ScriptTimeoutBaseSeconds must be 120 and
+  ScriptTimeoutPerItemSeconds 90 (moved up from 60 / 30 by itself), SettingsVersion 1. The time limit isn't on the
+  Settings screen.
+- Settings -> Test connection: the message now names the chat and receipt models.
+- Write down items A and B with Get-EsItem.ps1. Test 3 left ITEM B AT 98.00 FOR 2 (the timed-out SAVE saved
+  it). With the owner's OK, put B back to 98.50 for 2 with the app (item card Change..., SAVE), and check it.
+  Expected after that: A 99.00 for 1, case 12.00, on hand 0, min 2, max 12; B 98.50 for 2, the rest the same.
+- Leftovers, ask the owner (or note "not done"):
+  a) Sheet 10763 (Costco, 9 real items, OPEN): delete it in eStream? It must not be posted.
+  b) Sheet 10761 (TEST, count 0, OPEN): delete it?
+  c) The 4 TEST labels in GROCERY SHELVES (A x2, B x2): preview one of B's "2 for" labels (don't print) - is the
+     price on it? Then remove all 4 the owner's usual way and write down how.
+- Why was MINI BELLA MUSHROOMS 771163002506 left off sheet 10763? Read-only: look at its BarCode in Inventory
+  (exact value, digits, float) and at New-EsStockSheet.ps1's log for that run. Write down what you find; don't
+  change the script without the owner's OK.
+
+
+1. GM% FOR REAL ITEMS (read-only)
+---------------------------------
+- Look up COCA-COLA 6782900 (1 x 32, case 14.69, $2.25). The card's GM must be about 79.6%, followed by
+  "(eStream shows 0.0%: it uses the case cost / packs only)" or similar. In 0.1.7 it showed eStream's figure.
+- Look up two more "1 x N" items from test 3's list (e.g. SNICKERS 58496422394, KIT KAT 5980331) and one normal
+  item (LAYS ALL DRESS 60410079591). Write down the card's GM and eStream's GM% column for each.
+- Item A (TEST, 1 x 12 at $99): the card says about 99.0% (eStream shows 87.9%). That's expected now.
+- Reports -> Margin check, then Margin check with targets: both must run (test 3: "Arithmetic overflow"). Write
+  down the time and the item count. Pick 3 rows and compare with the item card.
+- If any report fails, check the error replaces the previous report (title "... - failed") instead of showing
+  under it.
+
+
+2. CLAUDE KNOWS THE LISTS
+-------------------------
+- Make sure PENDING CHANGES is empty. Ask Claude: "is anything in my pending list?" -> it must say it's empty.
+- Then: "change the price of 2999990000011 to 99.50 and 2999990000028 to 98.00" (keep B's "2 for"). Claude must
+  stage BOTH, must NOT say either is "already" in the list, and must NOT promise a price batch (2 items go
+  through the item editor). Write down its answer word for word.
+- With the owner's OK and eStream fast: SAVE, write down the time to the confirmation window and the save time.
+  Then put both back (A 99.00, B 98.50 for 2) the same way and time it again. Compare with test 2 (~33 s an item).
+- Clear the list. Ask Claude "what's in my count list?" -> empty.
+
+
+3. TEST 3 STEPS THAT WERE NOT DONE (on the TEST items only)
+-----------------------------------------------------------
+- Test 3 step 4 (Claude and the SAVE notes): do it as written in test3.txt.
+- Test 3 step 5b (receipt -> stock sheet -> POST, +12 on item A, then put it back with the item card). The POST
+  now runs the FIXED Publish-EsStockSheet.ps1: its last line is a RESULT line. Check the app still says
+  "POSTED OK" / marks the sheet POSTED, and write down the RESULT line from the app log.
+- The fixed scripts from test 3 that weren't run on screen yet (see FIX-NOTES.txt): one Publish -DryRun on that
+  TEST sheet before the post (done by the app's Post... check), and Invoke-EsCsv.ps1 moving an Inbox file:
+  put a ONE-row TEST CSV (item A, Min 2 -> 3) in Inbox, run Invoke-EsCsv.ps1 -Path <that file> for real
+  (owner's OK), check the file moved to Done\, then put Min back to 2 the same way.
+- Test 3 step 7a: with a TEST row staged, ask Claude "save the changes now" -> it must refuse and point to SAVE.
+- Test 3 step 7f (optional, owner's OK): dry run only on LAYS ALL DRESS and CUCMBER LAYS (+0.10), never SAVE.
+
+
+4. RECEIPTS: SHELF CODES AND OLD RECEIPTS (real items, read-only - NO stock sheet, NO staging)
+---------------------------------------------------------------------------------------------
+- Load the Costco receipt again (C:\eStreamAutomation\costco (3).pdf) and Send. Lines with a Costco item number
+  must now match by "shelf code" without help (test 3 found 17 shelf-code hits: 457 HOMO MILK, 458 2% MILK,
+  1076115 MINI BELLA MUSHROOMS, ...). Line 24 HALF&HALF code 1019 must ask to pick between ISLAND FARMS HALF &
+  HALF (shelf code) and PROPANE & TANK (UPC/PLU). Write down how many lines matched and which ones didn't.
+- GM on a "1 x 2" line (ORGANIC MANGO ORANGE, KIRKLAND WHIPPED CREAM): no more -42% / -58%; about 28% instead.
+- Press "Add stock (stock sheet)...": the window must now say which items have a NEGATIVE on hand and how much
+  posting would really add (e.g. "ISLAND FARMS 10% HALF & HALF -36 -> 10 adds 46"). Press CANCEL. Don't make a sheet.
+- Stock counts tab: sheet 10763 must show "NOT RIGHT: don't post, delete it in eStream", and its Post... button
+  must be off.
+- Finish the receipt without changes.
+- Note: the owner's open sheets (10749, ...) are listed under Reports -> Stock sheets, not on the Stock counts
+  tab (that tab only lists sheets the app made). Check Reports -> Stock sheets lists them and marks the protected
+  ones, and open one there (read-only): names, UPCs, counted/system look right.
+
+
+5. OWNER QUESTIONS AND CHECKS (from test 3, still open)
+-------------------------------------------------------
+- Pack sizes (test 3 step 7d). Ask the owner, and write down the answers word for word:
+  a) COCA-COLA 6782900 is 1 x 32 at $2.25: sold one can at a time? When a case of 32 comes in, should on hand
+     go up by 32?
+  b) Cigarettes, e.g. CANADIAN CLASSIC KS 1 x 10 at $22.00: sold one pack at a time; a carton in = +10?
+  c) CONCRETE REDI MIX 4080 1 x 56 at $13.99: what is one "unit" here, and what does one delivery add?
+  The app now assumes: price and GM per unit, a receipt adds cases x packs x units.
+- OWNER: count sheet photo - test 3 found Claude asks in the chat ("Do these match your sheet?") before adding
+  counts to the list, with no separate window. Is a chat question enough for the owner? (Counts only go to the
+  app's list; a stock sheet always has its own window.)
+- OWNER (from test 3 Part B, not done): barcode scanner in the chat box / item card / Reports tab; drag and drop of
+  a receipt file; a phone photo upright and sideways; Print one report; display scaling 125% and 150%; one REAL
+  supplier invoice read (lines, costs, matches) and "30% markup on ..." prices sensible - finish without staging.
+
+
+WHAT TO SEND BACK
+-----------------
+Write C:\eStreamAutomation\Done\test4-report.txt with, for each step: what you did, pass / fail / not done, the
+times from step 2, Claude's answers from step 2, the GM figures from step 1, the receipt match counts from step 4,
+the owner's answers from step 5, what you found about MINI BELLA MUSHROOMS, anything that behaved differently from
+this file, and the final values of items A and B (they must match the values written down at the start, with B
+back at 98.50 for 2). Copy that file, the app's log for the test day (%LOCALAPPDATA%\eStreamAssistant\logs) and
+the engine log into a folder for the developer.

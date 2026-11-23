@@ -119,7 +119,7 @@ public sealed partial class ReportService
     internal static string? MarginProblem(ItemFacts f, decimal target, out decimal unitPrice, out decimal gm)
     {
         unitPrice = f.For > 0 ? Math.Round(f.Price / f.For, 4) : f.Price;
-        var cost = f.PackCost; // eStream's GM is per pack
+        var cost = f.SellCost; // per item as sold (eStream's StoreGM is per pack: wrong for "1 × N" items)
         gm = PricingCalculator.GrossMarginPct(unitPrice, cost);
         if (f.Price <= 0) return "No price";
         if (cost <= 0) return "No cost";

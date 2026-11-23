@@ -32,10 +32,17 @@ public sealed partial class ItemCardViewModel : ObservableObject
         CaseCostText = item.CaseCost.ToString("C", Money);
         PackText = $"{Num(item.PacksPerCase)} pack × {Num(item.UnitsPerPack)} units";
         UnitCostText = "$" + item.UnitCost.ToString("0.00##", CultureInfo.InvariantCulture);
-        // eStream shows GM 0 when the cost is above the price (manual: Inventory - Fields).
-        GmText = item.For > 0 && item.PackCost > item.Price / item.For && item.Price > 0
-            ? "below cost"
-            : $"{item.GmPct:0.0}%";
+        // GM per item as sold (case cost ÷ packs × units). eStream's GM% divides by packs only, so for the store's
+        // "1 × N" items (sold one unit at a time) it shows 0% or a negative figure: say so instead of copying it.
+        if (item.Price <= 0 || item.For <= 0) GmText = $"{item.GmPct:0.0}%";
+        else
+        {
+            var unitPrice = item.Price / item.For;
+            var gm = Core.Pricing.PricingCalculator.GrossMarginPct(unitPrice, item.SellCost);
+            GmText = item.SellCost > unitPrice ? "below cost" : $"{gm:0.0}%";
+            if (Math.Abs(gm - item.GmPct) >= 1m)
+                GmText += $"  (eStream shows {item.GmPct:0.0}%: it uses the case cost ÷ packs only)";
+        }
         OnHandText = Num(item.OnHand);
         MinMaxText = $"{Num(item.Min)} / {Num(item.Max)}";
         SoldText = Num(item.Sold);
@@ -63,7 +70,7 @@ public sealed partial class ItemCardViewModel : ObservableObject
     public string CaseCostText { get; }
     public string PackText { get; }
     public string UnitCostText { get; }
-    public string GmText { get; }
+    public string GmText { get; } = "";
     public string OnHandText { get; }
     public string MinMaxText { get; }
     public string SoldText { get; }
