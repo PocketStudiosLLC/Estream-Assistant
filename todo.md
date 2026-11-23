@@ -1,6 +1,7 @@
 # To test
 
 Everything below is built but hasn't been tried for real yet. Most of it needs the store PC.
+`docs/test3.txt` (v0.1.7) covers the store-PC items below: Part A the v0.1.7 fixes, Part B the rest.
 
 ## With a real API key
 - [ ] Settings → Test connection works.
@@ -9,7 +10,7 @@ Everything below is built but hasn't been tried for real yet. Most of it needs t
 - [ ] Receipt: drop a real invoice photo. Lines, costs and unreadable lines look right.
 - [ ] Receipt: "30% markup on the chips" gives sensible prices.
 - [ ] Receipt: try a PDF invoice.
--  ] Count sheet photo: counts are read and only added after you confirm.
+- [ ] Count sheet photo: counts are read and only added after you confirm.
 - [ ] Model routing: a text message uses the chat model, a message with a photo/PDF uses the receipt model (check the app log).
 - [ ] Is Sonnet good enough for chat, or is Haiku enough? Is the receipt model at medium effort right for receipts?
 - [ ] Asking Claude to save is refused.
@@ -27,7 +28,7 @@ Everything below is built but hasn't been tried for real yet. Most of it needs t
 - [ ] Export CSV opens in Excel; Print prints a readable table.
 
 ## On the store PC (Windows)
-- [ ] The installer runs without admin rights; the app starts from the Start menu.
+- [x] The installer runs without admin rights; the app starts from the Start menu.
 - [ ] Data source Sql: lookups and name search work, and they're fast.
 - [ ] Scanner: scans are picked up wherever the focus is in the app.
 - [ ] Drag and drop, Ctrl+V paste and Add receipt… work.
@@ -39,16 +40,16 @@ Everything below is built but hasn't been tried for real yet. Most of it needs t
 
 ## With the real scripts (PowerShell engine)
 - [x] Copy `C:\eStreamAutomation` to the dev PC and fix the TODOs in the code (done from the Phase C hand-off, 2026-11-22).
-- [ ] Copy the hand-off's `eStreamUI.psm1` and every `.ps1` to `C:\eStreamAutomation` on the store PC if they aren't there yet
+- [x] Copy the hand-off's `eStreamUI.psm1` and every `.ps1` to `C:\eStreamAutomation` on the store PC if they aren't there yet
   (the hand-off says every script imports the new module).
-- [ ] Delete any old `assistant_*.csv` left in `C:\eStreamAutomation\Inbox` by earlier versions (they would be applied again
+- [x] Delete any old `assistant_*.csv` left in `C:\eStreamAutomation\Inbox` by earlier versions (they would be applied again
   by a plain `Invoke-EsCsv.ps1` run). The app now keeps its CSVs in its own runs folder.
 - [ ] Dry run on 60410079591 (LAYS ALL DRESS 220 g) and 60410079966 (CUCMBER LAYS) passes.
-- [ ] One real SAVE, with the owner watching: Applied and verified.
-- [ ] Stock sheet: Check, then Make stock sheet with a few counts.
-- [ ] First real stock sheet POST: only with the owner's real counts and go-ahead.
+- [x] One real SAVE, with the owner watching: Applied and verified (test 2, TEST items).
+- [x] Stock sheet: Check, then Make stock sheet with a few counts.
+- [ ] First real stock sheet POST with the owner's real counts (posting itself worked on the TEST items in test 2).
 - [ ] A script timeout is handled (rows show Failed, app keeps working).
-- [ ] Engine calls show in the app log with exit code and time.
+- [x] Engine calls show in the app log with exit code and time.
 
 ## Phase C features: tested on the store PC in test 2 (v0.1.6, 2026-11-23), all passed
 Report: `complete/` (gitignored). Price batch import/apply, item editor SAVE, receipt → stock sheet → POST,

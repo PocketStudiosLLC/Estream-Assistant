@@ -8,7 +8,13 @@ at a time, say exactly what to click.
 
 Why this test: test 2 passed, and v0.1.7 fixes what it found: GM% on the cost per pack, failed stock sheet
 posts, sheets whose counts add up to 0, "N for" prices eStream refuses, Claude mixing up SAVEs, and price
-batches only from 4 items. This test checks each fix in the app. It is shorter than test 2: no script timing.
+batches only from 4 items. PART A (steps 0-6) checks each fix. PART B (step 7) works through the open items of the
+developer's to-test list that can be checked on this PC: chat, receipts, reports, stock sheets, the PC itself.
+No script timing this time.
+
+You can drive the app yourself (Windows UI Automation, as in test 2) when the owner agrees. Some checks need the
+owner's hands or eyes (scanner, phone photos, printing, display scaling); each one says "OWNER". If the owner is
+busy, skip those and list them in the report as "not done".
 
 
 SAFETY RULES (same as test 2, they never change)
@@ -25,6 +31,9 @@ SAFETY RULES (same as test 2, they never change)
   B: price 98.50 for 2, case cost 12.00 (1 x 12), on hand 0, min 2, max 12.
   If Get-EsItem.ps1 shows something else, write down what you find instead.
 
+
+PART A - the v0.1.7 fixes
+=========================
 
 0. INSTALL AND LEFTOVERS FROM TEST 2
 ------------------------------------
@@ -109,9 +118,81 @@ the old file (e.g. Publish-EsStockSheet.ps1.bak-test3), and run the script's dry
   (it counts only the line it added). Cosmetic.
 
 
+PART B - the rest of the to-test list
+=====================================
+Read-only unless a step says otherwise. Never stage or SAVE a real item here, and never make or post a stock
+sheet with real items. Write "pass", "fail: <what>" or "not done: <why>" for every line.
+
+7a. Chat (needs the Claude API key in Settings; it was working in test 2)
+  - Settings -> Test connection: says Connected and names the models.
+  - Ask a question, then a second one. The app log's second request shows cache reads above 0 ("cache read").
+    (Test 2 logged one "Prompt cache: 0 tokens read on a warm conversation" warning: say if you see it again and
+    how long after the previous message.)
+  - Type "lays cucumber": Claude gives numbered choices as buttons; clicking one looks the item up.
+  - Model routing: in the app log, a text message uses the chat model and a message with a photo or PDF uses the
+    receipt model. Write down both model names.
+  - Ask Claude "save the changes now" (with a TEST row staged): it must refuse and point to the SAVE button.
+    Clear the list afterwards.
+  - Your opinion for the developer: were the chat answers good and quick enough? Any answer that was wrong or slow?
+
+7b. Receipts
+  - A PDF receipt: print the fake TEST receipt from test 2 (or a new one for item A) to PDF ("Microsoft Print to
+    PDF") and drop it on the app. The line is read like the photo was. Don't stage anything.
+  - Receipts folder: copy a fake TEST receipt image into C:\eStreamAutomation\Receipts. It shows up in the app by
+    itself. Finish receipt (no changes) moves it to Receipts\Done.
+  - Drag and drop a file onto the app, and "Add receipt..." (file picker): both work (Ctrl+V worked in test 2).
+  - Count sheet photo: make a fake paper count sheet "2999990000011 count 3, 2999990000028 count 4" (photo or
+    image), drop it on the app and ask Claude to add the counts. Counts are only added after the confirmation
+    window, and the Stock counts list shows them. Then Clear the count list. DON'T make a stock sheet.
+  - OWNER: a REAL supplier invoice photo (the owner picks one). Check the lines, case sizes, unit costs, the
+    "couldn't read" lines and the matched items against the paper. Then ask Claude "30% markup on the chips" (or
+    whatever fits the invoice): are the proposed prices sensible to the owner? Finish the receipt WITHOUT staging
+    anything. Write down any line that was wrong and why.
+  - OWNER: a phone photo of a receipt (taken upright and sideways): it shows the right way up.
+
+7c. Reports and stock sheets (read-only)
+  - App log after starting: "Stock sheet tables: columns as expected" (or "... are different" with the columns:
+    copy that line into the report).
+  - Reports -> Negative stock: compare the count with SQL (read-only):
+      SELECT COUNT(*) FROM Inventory WHERE ISNULL(Units,0) < 0 AND ISNULL(Inactive,0) = 0
+    (and the same without the Inactive filter - say which one the app matches). Time how long the report takes.
+  - Below minimum, Above re-order max, Zero stock: counts compared with SQL the same way; do the lists look sensible?
+  - Ask Claude "which items have negative stock?": it uses stock_report (in the app log) and points to the Reports tab.
+  - Stock counts tab, sheet list: the open sheets match Inventory > Stock Sheets in eStream (SQL is fine), and the
+    owner's 10749, 10750, 10754 are marked protected. Open one of the owner's sheets IN THE APP ONLY (read-only):
+    item names and UPCs are right, counted/system match eStream's figures for that sheet.
+  - Export CSV from a report: the file opens in Excel with the right columns. OWNER: Print one report: readable?
+  - Margins report: with v0.1.7's GM fix, do the "Below cost" / "Below target" items look right to the owner?
+    Pick 3 and compare the app's GM with eStream's GM% column.
+
+7d. Real items' pack sizes (read-only SQL) - this decides if receipts add the right stock
+  - SELECT COUNT(*) FROM Inventory WHERE ISNULL(Inactive,0) = 0 AND ISNULL(UnitsPerPack,0) > 1
+  - SELECT TOP 25 CAST(BarCode AS decimal(18,0)) UPC, RTRIM(Description) Description, PacksPerCase, UnitsPerPack,
+      CAST(CaseCost AS decimal(10,2)) CaseCost, CAST(SellingPrice AS decimal(10,2)) Price, PriceMult, Units OnHand
+    FROM Inventory WHERE ISNULL(Inactive,0) = 0 AND ISNULL(UnitsPerPack,0) > 1 ORDER BY Sold DESC
+  - Ask the owner about 3 of them: is the item sold one at a time at the till? When a case comes in, how many go
+    on the shelf, and does eStream's on hand go up by that number? (The app adds cases x packs x units on a receipt.)
+
+7e. The PC and the app
+  - Item lookups by UPC and by name: fast (write down roughly how long), right items.
+  - "Open Power Automate Desktop" button opens PAD. Close it again without running a flow.
+  - OWNER: the barcode scanner. Scan item A's barcode (or any item, lookup only) with the focus in the chat box, in
+    the item card, and on the Reports tab: each scan is picked up and looked up.
+  - OWNER: Windows display scaling 125% and 150% (Settings > Display), restart the app, look at each tab: anything
+    cut off or overlapping? Put the scaling back.
+  - The app keeps working after a script failure: if any script failed during this test, did the rows show Failed
+    and the app carry on? (Don't cause a failure on purpose.)
+
+7f. Optional, only with the owner's OK: a DRY RUN on two real items (nothing is saved)
+  - Stage a price change on 60410079591 (LAYS ALL DRESS 220 g) and 60410079966 (CUCMBER LAYS) to their CURRENT
+    price + 0.10, press "Dry run" (NOT SAVE). Both rows must say OK. Then Clear the list. Check with Get-EsItem.ps1
+    that both prices are unchanged.
+
+
 WHAT TO SEND BACK
 -----------------
 Write C:\eStreamAutomation\Done\test3-report.txt with, for each step: what you did, pass or fail, the times from
 step 3, Claude's answer from step 4, anything that behaved differently from this file, what the owner said about
-the leftovers in step 0, and the final values of items A and B (they must match the values you wrote down at the
+the leftovers in step 0, every Part B line (pass / fail / not done), the SQL results and the owner's answers from
+7d, and the final values of items A and B (they must match the values you wrote down at the
 start). Copy that file and the app's log for the test day into a folder for the developer.
