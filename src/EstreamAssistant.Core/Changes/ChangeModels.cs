@@ -83,6 +83,17 @@ public sealed record ChangeRow
     /// <summary>GM% before and after, when the price, For or case cost changes.</summary>
     public decimal? GmNow { get; init; }
     public decimal? GmNew { get; init; }
+    /// <summary>Things in eStream that change what this does: mix match group, specials, pending price batches.</summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+    /// <summary>The item's Mix Match group when the price or For changes (eStream reprices the whole group).</summary>
+    public MixMatchGroupRef? Group { get; init; }
+    /// <summary>The item is in a Mix Match group (whatever changes). The price batch script refuses these.</summary>
+    public bool InMixMatchGroup { get; init; }
+    /// <summary>The last dry run sent this row through a price batch (not the item editor); SAVE does the same.</summary>
+    public bool ViaPriceBatch { get; init; }
 
     public string ChangesText => Fields.Count == 0 ? "" : string.Join("; ", Fields);
 }
+
+/// <summary>The group a price change spreads to, kept so the save can report the other items afterwards.</summary>
+public sealed record MixMatchGroupRef(int Id, string Description, int Others);

@@ -30,14 +30,22 @@ public sealed class ToolExecutor
     private readonly Counts.StockCounts? _counts;
     private readonly Receipts.ReceiptSession? _receipt;
     private readonly Reports.ReportService? _reports;
+    private readonly Labels.LabelQueue? _labels;
+    private readonly Labels.EStreamLabels? _eStreamLabels;
     private CodeTables? _codes;
 
     /// <summary>How many report rows go back to Claude (the full list is on the Reports tab).</summary>
     public const int ReportRowsForClaude = 40;
 
+    /// <summary>How many list_items rows go back to Claude (the total count is always exact).</summary>
+    public const int ListRowsForClaude = 150;
+
     public ToolExecutor(ItemLookupService lookup, AppSettings settings, PendingChanges? pending = null, Counts.StockCounts? counts = null,
-        Receipts.ReceiptSession? receipt = null, Reports.ReportService? reports = null)
+        Receipts.ReceiptSession? receipt = null, Reports.ReportService? reports = null, Labels.LabelQueue? labels = null,
+        Labels.EStreamLabels? eStreamLabels = null)
     {
+        _eStreamLabels = eStreamLabels;
+        _labels = labels;
         _reports = reports;
         _lookup = lookup;
         _settings = settings;
@@ -56,6 +64,7 @@ public sealed class ToolExecutor
             {
                 ChatTools.LookupItem => await LookupItemAsync(input, ct).ConfigureAwait(false),
                 ChatTools.FindItems => await FindItemsAsync(input, ct).ConfigureAwait(false),
+                ChatTools.ListItems => await ListItemsAsync(input, ct).ConfigureAwait(false),
                 ChatTools.GetCodes => await GetCodesAsync(ct).ConfigureAwait(false),
                 ChatTools.CalcPrice => CalcPrice(input),
                 ChatTools.StageChanges => await StageChangesAsync(input, ct).ConfigureAwait(false),
@@ -66,6 +75,10 @@ public sealed class ToolExecutor
                 ChatTools.PriceReceiptLines => PriceReceiptLines(input),
                 ChatTools.StockReport => await StockReportAsync(input, ct).ConfigureAwait(false),
                 ChatTools.StockSheets => await StockSheetsAsync(input, ct).ConfigureAwait(false),
+                ChatTools.StoreReport => await StoreReportAsync(input, ct).ConfigureAwait(false),
+                ChatTools.ItemSales => await ItemSalesAsync(input, ct).ConfigureAwait(false),
+                ChatTools.ReceiptStockSheet => await ReceiptStockSheetAsync(input, ct).ConfigureAwait(false),
+                ChatTools.QueueShelfLabels => await QueueShelfLabelsAsync(ct).ConfigureAwait(false),
                 _ => ToolOutcome.Error($"Unknown tool '{name}'. Only {string.Join(", ", ChatTools.All.Select(t => t.Name))} exist."),
             };
         }
@@ -103,6 +116,7 @@ public sealed class ToolExecutor
             }, Json), false);
 
         var i = r.Item;
+        var ctx = await _lookup.GetContextAsync(i, ct).ConfigureAwait(false);
         return new(JsonSerializer.Serialize(new
         {
             found = true,
@@ -124,6 +138,20 @@ public sealed class ToolExecutor
             gm_pct = i.GmPct,
             inactive = i.Inactive,
             note = r.Note,
+            sold_last_4_weeks = i.WeekSales.Count > 0 ? i.FourWeekSales : (decimal?)null,
+            last_received = i.LastReceived?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            mix_match_group = ctx.Group is { } g ? new { id = g.Id, name = g.Description, other_items = g.Others.Count, more = g.MoreOthers } : null,
+            specials = ctx.Specials.Select(s => new
+            {
+                title = s.Title, price = s.Price, @for = s.For, on_now = s.IsOn(DateTime.Now),
+                start = s.Start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), end = s.End.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            }),
+            pending_price_batches = ctx.Batches.Select(b => new
+            {
+                batch = b.BatchId, new_price = b.NewPrice, new_for = b.NewFor, new_case_cost = b.NewCaseCost,
+                apply_on = b.ApplyOn?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), applies_automatically = b.AppliesAutomatically(DateTime.Now),
+            }),
+            pricing_notes = PriceWarnings.ForCard(ctx, DateTime.Now),
         }, Json), false, r);
     }
 
@@ -149,6 +177,32 @@ public sealed class ToolExecutor
             hint = r.Matches.Count == 0
                 ? "Nothing matched. Ask the owner for another word or to scan the barcode."
                 : r.IsConfident ? "Best match is clear." : "Not sure which item: show the owner a numbered list and let them pick.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> ListItemsAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        var text = GetString(input, "text", maxLength: 100);
+        if (text.Trim().Length == 0) throw new ToolInputException("text is empty.");
+        var r = await _lookup.ListAsync(text, GetBool(input, "include_inactive"), ct).ConfigureAwait(false);
+        var shown = Math.Min(r.Items.Count, ListRowsForClaude);
+        return new(JsonSerializer.Serialize(new
+        {
+            query = text,
+            total_items = r.Items.Count,
+            rows_here = shown,
+            items = r.Items.Take(shown).Select(i => new
+            {
+                upc = i.Upc.ToString(CultureInfo.InvariantCulture),
+                description = i.Description,
+                sold = i.Sold,
+                inactive = i.Inactive ? true : (bool?)null,
+            }),
+            next = r.Items.Count == 0
+                ? "Nothing has that word in its name (any capitals or spacing were already tried). Ask the owner for another word."
+                : (r.Items.Count > shown ? $"Only the first {shown} are here; tell the owner the total and ask for a narrower word. " : "") +
+                  "This is the complete list (capitals, apostrophes and spacing are already ignored); don't search again with other spellings. " +
+                  "Prices and stock aren't included: use lookup_item for the items the owner asks about.",
         }, Json), false);
     }
 
@@ -233,8 +287,9 @@ public sealed class ToolExecutor
                 result = o.Staged ? "staged" : "skipped",
                 changes = o.ChangesText,
                 message = o.Message,
+                warnings = o.Warnings,
             }),
-            next = "Tell the owner what is in the list (Now -> New). A dry run is needed before the owner can press SAVE.",
+            next = "Tell the owner what is in the list (Now -> New), and any warnings in plain words. A dry run is needed before the owner can press SAVE.",
         }, Json), false);
     }
 
@@ -312,6 +367,42 @@ public sealed class ToolExecutor
             next = run.Ok
                 ? "Tell the owner the sheet number. To post it (no undo) they use the Stock counts tab: post check, then type the sheet number. You cannot post."
                 : "Explain what happened in plain words.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> ReceiptStockSheetAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_receipt is null || _counts is null) throw new ToolInputException("Receipts or stock sheets aren't available.");
+        if (!_receipt.IsOpen || _receipt.Lines.Count == 0) throw new ToolInputException("No receipt lines yet. Use show_receipt_lines first.");
+        var arr = Get(input, "lines");
+        if (arr.ValueKind != JsonValueKind.Array) throw new ToolInputException("'lines' must be a list of line numbers.");
+        var numbers = arr.EnumerateArray()
+            .Select(e => e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out var i) ? i : throw new ToolInputException("Line numbers must be whole numbers."))
+            .ToHashSet();
+        var (run, rc) = await _receipt.MakeStockSheetAsync(_counts, numbers, ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            ok = run.Ok,
+            sheet = run.SheetId,
+            message = run.Message,
+            counts = rc.Rows.Select(r => new { upc = r.Upc.ToString(CultureInfo.InvariantCulture), description = r.Description, count = r.Count, how = r.Note }),
+            left_out = rc.Problems,
+            next = run.Ok
+                ? "Tell the owner the sheet number and what it adds. The stock only changes when they POST it on the Stock counts tab (post check, then type the number; no undo). You cannot post."
+                : "Explain what happened in plain words.",
+        }, Json), false);
+    }
+
+    private async Task<ToolOutcome> QueueShelfLabelsAsync(CancellationToken ct)
+    {
+        if (_eStreamLabels is null) throw new ToolInputException("Queuing labels in eStream isn't available.");
+        var run = await _eStreamLabels.QueueAsync(null, ct).ConfigureAwait(false);
+        return new(JsonSerializer.Serialize(new
+        {
+            ok = run.Ok,
+            queued = run.Queued,
+            message = run.Message,
+            next = "Tell the owner in plain words. They print the queued labels from Labels Print in eStream.",
         }, Json), false);
     }
 
@@ -395,6 +486,107 @@ public sealed class ToolExecutor
             not_priced_reason = missing.Count > 0 ? "Those lines have no matched item or no cost yet." : null,
             next = "Tell the owner each price as Now -> New. Stage with stage_changes (price, and case_cost from new_case_cost) only when they agree.",
         }, Json), false);
+    }
+
+    private static object ReportJson(Reports.Report r, string next) => new
+    {
+        report = r.Title,
+        summary = r.Summary,
+        notes = r.Notes,
+        total_rows = r.Rows.Count,
+        rows_here = Math.Min(r.Rows.Count, ReportRowsForClaude),
+        columns = r.Columns.Select(c => c.Header),
+        rows = r.Rows.Take(ReportRowsForClaude).Select(row => row.Select((v, i) => i < r.Columns.Count ? Reports.Report.Display(v, r.Columns[i].Kind) : "")),
+        next,
+    };
+
+    private const string ReportsTabNext =
+        "Give the owner the totals and the few rows that matter most, in plain words. The full list is on the Reports tab " +
+        "(export to CSV or print); mention that instead of reading out a long list.";
+
+    private async Task<ToolOutcome> StoreReportAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_reports is null) throw new ToolInputException("Reports aren't available.");
+        var kind = GetString(input, "report", 30);
+        Reports.Report r;
+        string next = ReportsTabNext;
+        switch (kind)
+        {
+            case "suggested_order":
+            {
+                var text = GetString(input, "vendor", 60).Trim();
+                if (text.Length == 0) throw new ToolInputException("vendor is needed for suggested_order (a vendor number or part of its name). Use report=vendors to list them.");
+                var (vendor, matches) = await _reports.FindVendorAsync(text, ct).ConfigureAwait(false);
+                if (vendor is null)
+                    return new(JsonSerializer.Serialize(new
+                    {
+                        found = false,
+                        vendor = text,
+                        candidates = matches.Take(10).Select(v => new { number = v.Id, name = v.Name, inactive = v.Inactive }),
+                        next = matches.Count == 0 ? "No vendor matches. Ask the owner, or list them with report=vendors."
+                            : "Several vendors match. Show the owner a short numbered list and ask which one.",
+                    }, Json), false);
+                var method = GetString(input, "method", 20) switch
+                {
+                    "reorder_quantity" => Reports.OrderMethod.ReorderQuantity,
+                    "sales_history" => Reports.OrderMethod.SalesHistory,
+                    "top_up_to_max" or "" => Reports.OrderMethod.TopUpToMax,
+                    _ => throw new ToolInputException("method must be reorder_quantity, top_up_to_max or sales_history."),
+                };
+                int history = GetInt(input, "history_days") is int h and > 0 ? Math.Min(h, 366) : 28;
+                int needed = GetInt(input, "days_needed") is int d and > 0 ? Math.Min(d, 120) : 7;
+                var o = await _reports.OrderAsync(vendor, new Reports.OrderSettings(method, history, needed), ct).ConfigureAwait(false);
+                r = o.Report;
+                next = "Tell the owner how many items and the estimated cost, and the few biggest lines. It's only a suggestion: nothing is ordered. " +
+                       "On the Reports tab they can save a UPC,Count file to import on eStream's Purchase Order screen, or print the list.";
+                break;
+            }
+            case "vendors": r = await _reports.VendorListAsync(ct).ConfigureAwait(false); break;
+            case "margins": r = (await _reports.MarginsAsync(false, ct).ConfigureAwait(false)).Report; break;
+            case "margins_with_targets": r = (await _reports.MarginsAsync(true, ct).ConfigureAwait(false)).Report; break;
+            case "stock_value": r = await _reports.StockValueAsync(ct).ConfigureAwait(false); break;
+            case "mix_match_groups": r = await _reports.MixMatchListAsync(ct).ConfigureAwait(false); break;
+            case "specials": r = await _reports.SpecialsListAsync(ct).ConfigureAwait(false); break;
+            case "price_batches": r = await _reports.BatchListAsync(ct).ConfigureAwait(false); break;
+            case "estream_label_flags": r = await _reports.EStreamLabelFlagsAsync(ct).ConfigureAwait(false); break;
+            case "shelf_labels":
+                r = _labels?.ToReport() ?? Labels.LabelQueue.Empty;
+                _reports.ShowReport(r);
+                next = "Tell the owner how many labels are waiting. They can print the list on the Reports tab and press Clear list once the labels are out.";
+                break;
+            default:
+                throw new ToolInputException("Unknown report.");
+        }
+        if (kind.StartsWith("margins", StringComparison.Ordinal))
+            next += " If the owner wants to fix prices, look up the item and stage the change as usual; never stage from this list without asking.";
+        return new(JsonSerializer.Serialize(ReportJson(r, next), Json), false);
+    }
+
+    private async Task<ToolOutcome> ItemSalesAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
+    {
+        if (_reports is null) throw new ToolInputException("Reports aren't available.");
+        var upc = GetString(input, "upc", 40);
+        if (!UpcNormalizer.LooksLikeUpc(upc)) throw new ToolInputException("upc must be digits only.");
+        int days = GetInt(input, "days");
+        if (days is < 1 or > 366) throw new ToolInputException("days must be between 1 and 366.");
+        var found = await _lookup.LookupUpcAsync(upc, ct).ConfigureAwait(false);
+        if (found.Item is null) return ToolOutcome.Error("Not in eStream.");
+        var (report, list) = await _reports.SalesHistoryAsync(found.Item, days, ct).ConfigureAwait(false);
+        decimal qty = list.Sum(d => d.Quantity);
+        return new(JsonSerializer.Serialize(new
+        {
+            upc = found.Item.Upc.ToString(CultureInfo.InvariantCulture),
+            description = found.Item.Description,
+            days,
+            units_sold = qty,
+            sales_dollars = list.Sum(d => d.Amount),
+            units_per_day = Math.Round(qty / days, 2),
+            on_hand = found.Item.OnHand,
+            days_of_stock = qty > 0 && found.Item.OnHand > 0 ? Math.Floor(found.Item.OnHand / (qty / days)) : (decimal?)null,
+            busiest_days = list.OrderByDescending(d => d.Quantity).Take(3).Select(d => new { day = d.Day.ToString("yyyy-MM-dd ddd", CultureInfo.InvariantCulture), units = d.Quantity }),
+            summary = report.Summary,
+            next = "Answer in a sentence or two. The day-by-day list is on the Reports tab.",
+        }, Json), false, found);
     }
 
     private async Task<ToolOutcome> StockReportAsync(IReadOnlyDictionary<string, JsonElement> input, CancellationToken ct)
@@ -525,6 +717,8 @@ public sealed class ToolExecutor
         gm_pct_at_current_price = l.GmAtCurrentPrice,
         proposed_price = l.ProposedPrice,
         proposed_gm_pct = l.ProposedGm,
+        received_units = l.ReceivedUnits,
+        received_math = l.ReceivedMath.Length > 0 ? l.ReceivedMath : null,
         warnings = l.Warnings.Count > 0 ? l.Warnings : null,
     };
 

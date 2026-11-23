@@ -101,6 +101,20 @@ public class ToolExecutorTests
         Assert.True(doc.RootElement.GetProperty("matches").GetArrayLength() >= 2);
     }
 
+    [Fact]
+    public async Task List_items_returns_every_brand_item_with_count()
+    {
+        var r = await Make().ExecuteAsync(ChatTools.ListItems, In(new { text = "LAYS", include_inactive = false }));
+        Assert.False(r.IsError);
+        using var doc = JsonDocument.Parse(r.Json);
+        Assert.Equal(7, doc.RootElement.GetProperty("total_items").GetInt32());
+        Assert.Equal(7, doc.RootElement.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task List_items_rejects_empty_text() =>
+        Assert.True((await Make().ExecuteAsync(ChatTools.ListItems, In(new { text = " ", include_inactive = false }))).IsError);
+
     [Theory]
     [InlineData(0)]
     [InlineData(9)]

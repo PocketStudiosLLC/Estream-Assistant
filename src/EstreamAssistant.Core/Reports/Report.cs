@@ -22,6 +22,12 @@ public enum ReportKind
     Stock,
     SheetList,
     Sheet,
+    /// <summary>Shelf labels to print (rows are items).</summary>
+    Labels,
+    /// <summary>Any other list of items (double-click opens the item).</summary>
+    Items,
+    /// <summary>A list that isn't items (groups, events, batches, categories, vendors).</summary>
+    Other,
 }
 
 /// <summary>
@@ -41,6 +47,13 @@ public sealed record Report
     public DateTime Created { get; init; } = DateTime.Now;
     /// <summary>The sheet number for a <see cref="ReportKind.Sheet"/> report.</summary>
     public int? SheetId { get; init; }
+    /// <summary>
+    /// A UPC,Count CSV (CRLF) eStream can import on its Purchase Order, Transfer, Credit Note and Stock Sheet screens
+    /// (e.g. a suggested order). Null when the report has none.
+    /// </summary>
+    public string? ImportCsv { get; init; }
+    /// <summary>Where the import file goes in eStream, shown next to the save button.</summary>
+    public string ImportHint { get; init; } = "";
 
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 

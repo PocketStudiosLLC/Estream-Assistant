@@ -16,6 +16,8 @@ public sealed record FindResult(string Query, IReadOnlyList<ItemMatch> Matches, 
     public bool IsConfident => FuzzyMatcher.IsConfident(Matches);
 }
 
+public sealed record KeywordResult(string Query, IReadOnlyList<ItemName> Items, bool CacheWasRefreshed);
+
 /// <summary>
 /// Item lookups used by the scan box, the item card and (later) Claude's tools.
 /// Combines UPC fallbacks with the repository, and fuzzy search with the name cache.
@@ -67,6 +69,18 @@ public sealed class ItemLookupService
         return new FindResult(query, _cache.Matcher.Find(query, top), true);
     }
 
+    /// <summary>Keyword/brand listing (every match, any capitals or spacing). Refreshes the cache once if nothing is found.</summary>
+    public async Task<KeywordResult> ListAsync(string query, bool includeInactive, CancellationToken ct = default)
+    {
+        var items = _cache.Matcher.FindKeyword(query, includeInactive);
+        if (items.Count > 0 || DateTime.UtcNow - _lastAutoRefreshUtc < AutoRefreshMinInterval || _cache.IsRefreshing)
+            return new KeywordResult(query, items, false);
+
+        _lastAutoRefreshUtc = DateTime.UtcNow;
+        await _cache.RefreshAsync(_repo, ct).ConfigureAwait(false);
+        return new KeywordResult(query, _cache.Matcher.FindKeyword(query, includeInactive), true);
+    }
+
     /// <summary>Loads the cache from disk and reports whether it should be refreshed.</summary>
     public async Task<bool> LoadCacheAsync(CancellationToken ct = default)
     {
@@ -75,4 +89,34 @@ public sealed class ItemLookupService
     }
 
     public Task RefreshCacheAsync(CancellationToken ct = default) => _cache.RefreshAsync(_repo, ct);
+
+    /// <summary>Set by the app: where a failed context read is logged.</summary>
+    public Action<string, Exception>? LogError { get; set; }
+
+    /// <summary>
+    /// The item's Mix Match group (with member names from the name cache), specials and pending price batches.
+    /// Never throws: a failure gives an empty context with <see cref="ItemContext.Problem"/> set.
+    /// </summary>
+    public async Task<ItemContext> GetContextAsync(Item item, CancellationToken ct = default)
+    {
+        try
+        {
+            var ctx = await _repo.GetItemContextAsync(item, ct).ConfigureAwait(false);
+            if (ctx.Group is { } g)
+                ctx = ctx with
+                {
+                    Group = g with
+                    {
+                        Others = g.Others.Select(m => m with { Description = _cache.Get(m.Upc)?.Description ?? m.Upc.ToString(System.Globalization.CultureInfo.InvariantCulture) }).ToList(),
+                    },
+                };
+            return ctx;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            LogError?.Invoke($"Reading mix match / specials / price batches for {item.Upc} failed", ex);
+            return ItemContext.Empty with { Problem = "Mix match, specials and price batches couldn't be read." };
+        }
+    }
 }

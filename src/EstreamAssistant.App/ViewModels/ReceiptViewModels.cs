@@ -22,11 +22,22 @@ public sealed partial class ReceiptLineViewModel : ObservableObject
 {
     private static readonly CultureInfo Ca = CultureInfo.GetCultureInfo("en-CA");
 
-    public ReceiptLineViewModel(ReceiptLine line, bool isChecked)
+    /// <param name="onSheet">The line is already on a stock sheet (its number, null when unknown).</param>
+    public ReceiptLineViewModel(ReceiptLine line, bool isChecked, (bool Yes, int? Sheet) onSheet = default)
     {
         Line = line;
         _isChecked = isChecked && line.CanStageCost;
+        _onSheet = onSheet;
     }
+
+    private readonly (bool Yes, int? Sheet) _onSheet;
+
+    /// <summary>What the line adds to stock (receipt → stock sheet), or that it's already on a sheet.</summary>
+    public string StockText => _onSheet.Yes
+        ? $"Stock: on stock sheet {_onSheet.Sheet?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)"}"
+        : Line.Item is null || Line.ReceivedUnits is not { } r ? ""
+        : $"Stock: receives {r.ToString("0.##", CultureInfo.InvariantCulture)} unit{(r == 1 ? "" : "s")}"
+          + (Line.ReceivedMath.Contains('×') ? $" ({Line.ReceivedMath})" : "");
 
     public ReceiptLine Line { get; }
     public int Number => Line.Number;

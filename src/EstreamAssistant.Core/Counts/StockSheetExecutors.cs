@@ -76,10 +76,9 @@ public sealed class MockStockSheetExecutor(IItemRepository repo) : IStockSheetEx
 
 /// <summary>
 /// The real engine's stock sheet scripts:
-///   New-EsStockSheet.ps1 -Path &lt;csv&gt; [-Comment x] [-Check]
-///   Publish-EsStockSheet.ps1 -SheetId N [-DryRun]
-/// Counts CSVs go to the app's runs folder, not Inbox\Counts (PAD's "Make stock sheet" would import those).
-/// TODO(store PC): confirm how New-EsStockSheet.ps1 reports the new sheet number (parsed from its output).
+///   New-EsStockSheet.ps1 -Path &lt;csv&gt; [-Comment x] [-Check]   exit 0/1/2, last line RESULT: {...,"id":&lt;sheet&gt;,"kind":"StockSheet"}
+///   Publish-EsStockSheet.ps1 -SheetId N [-DryRun]             exit code only (no RESULT line yet)
+/// Counts CSVs go to the app's runs folder, not Inbox\Counts (Invoke-EsCountCsv.ps1 would import those).
 /// </summary>
 public sealed partial class PowerShellStockSheetExecutor(string engineFolder, string runsFolder, AppLog? log = null) : IStockSheetExecutor
 {
@@ -88,8 +87,8 @@ public sealed partial class PowerShellStockSheetExecutor(string engineFolder, st
     public TimeSpan CreateTimeout { get; init; } = TimeSpan.FromMinutes(5);
     public TimeSpan PostTimeout { get; init; } = TimeSpan.FromMinutes(5);
 
-    private string NewSheet => Path.Combine(engineFolder, "New-EsStockSheet.ps1");
-    private string Publish => Path.Combine(engineFolder, "Publish-EsStockSheet.ps1");
+    private const string NewSheet = "New-EsStockSheet.ps1";
+    private const string Publish = "Publish-EsStockSheet.ps1";
 
     public async Task<SheetRun> CheckAsync(string countsCsv, CancellationToken ct)
     {
@@ -103,8 +102,7 @@ public sealed partial class PowerShellStockSheetExecutor(string engineFolder, st
         List<string> args = ["-Path", path];
         if (comment.Length > 0) { args.Add("-Comment"); args.Add(comment); }
         // Not cancellable once started: a half-made sheet is worse than waiting.
-        var run = await RunAsync(NewSheet, args, CreateTimeout, CancellationToken.None, "Making the sheet").ConfigureAwait(false);
-        return run with { SheetId = ParseSheetId(run.Output) };
+        return await RunAsync(NewSheet, args, CreateTimeout, CancellationToken.None, "Making the sheet", wantsId: true).ConfigureAwait(false);
     }
 
     public Task<SheetRun> PostDryRunAsync(int sheetId, CancellationToken ct) =>
@@ -116,9 +114,13 @@ public sealed partial class PowerShellStockSheetExecutor(string engineFolder, st
     [GeneratedRegex(@"(?:stock\s*)?sheet\s*(?:id|no\.?|number|#)?\s*[:=#]?\s*(\d{3,7})", RegexOptions.IgnoreCase)]
     private static partial Regex SheetIdPattern();
 
-    /// <summary>The LAST sheet number mentioned in the output (e.g. "Created stock sheet 10812").</summary>
+    /// <summary>
+    /// The new sheet number: the RESULT line's id; for an older script without one, the LAST sheet number in the
+    /// text (e.g. "Created stock sheet 10812").
+    /// </summary>
     public static int? ParseSheetId(string output)
     {
+        if (ScriptResult.Parse(output) is { } r) return r.DryRun ? null : r.Id;
         var matches = SheetIdPattern().Matches(output);
         return matches.Count == 0 ? null : int.Parse(matches[^1].Groups[1].Value, CultureInfo.InvariantCulture);
     }
@@ -131,23 +133,21 @@ public sealed partial class PowerShellStockSheetExecutor(string engineFolder, st
         return path;
     }
 
-    private async Task<SheetRun> RunAsync(string script, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct, string what)
+    private async Task<SheetRun> RunAsync(string script, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct, string what, bool wantsId = false)
     {
-        if (!File.Exists(script)) return new(false, $"Can't find {script}. Check the engine folder in Settings.", "");
-        if (!await ScriptRunner.EngineLock.WaitAsync(TimeSpan.Zero, ct).ConfigureAwait(false))
-            return new(false, "Another eStream operation is already running.", "");
-        try
-        {
-            var (exit, output, timedOut) = await ScriptRunner.RunAsync(engineFolder, script, args, timeout, ct).ConfigureAwait(false);
-            log?.Info($"{Path.GetFileName(script)} {string.Join(' ', args)}: exit {exit}{(timedOut ? " (timeout)" : "")}\n{output}");
-            if (timedOut) return new(false, $"{what} took too long and was stopped. Check the eStream screen.", output);
-            return exit == 0
-                ? new(true, $"{what} finished.", output)
-                : new(false, $"{what} failed (exit code {exit}). {ScriptRunner.LastLine(output)}", output);
-        }
-        finally
-        {
-            ScriptRunner.EngineLock.Release();
-        }
+        var run = await EngineScripts.RunAsync(engineFolder, script, args, timeout, ct, log).ConfigureAwait(false);
+        return ToSheetRun(run, what, wantsId);
+    }
+
+    /// <summary>Exit 0 = OK (and RESULT ok, when the script writes one), 2 = refused before touching eStream.</summary>
+    internal static SheetRun ToSheetRun(ScriptRun run, string what, bool wantsId)
+    {
+        int? id = wantsId ? (run.Result is { } r ? (r.DryRun ? null : r.Id) : ParseSheetId(run.Output)) : null;
+        if (run.Exit == -1 && !run.TimedOut) return new(false, run.Output, "");
+        if (run.TimedOut) return new(false, $"{what} took too long and was stopped. Check the eStream screen.", run.Output, id);
+        bool ok = run.Exit == 0 && run.Result is not { Ok: false };
+        var detail = run.Result?.Message is { Length: > 0 } m ? m : ScriptRunner.LastLine(run.Output);
+        if (ok) return new(true, run.Result?.Message is { Length: > 0 } msg ? msg + "." : $"{what} finished.", run.Output, id);
+        return new(false, run.Refused ? $"{what} was refused: {detail}" : $"{what} failed (exit code {run.Exit}). {detail}", run.Output, id);
     }
 }

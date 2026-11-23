@@ -53,11 +53,11 @@ public sealed partial class CountsViewModel : ObservableObject
         _log = log;
         counts.Changed += (_, _) => OnUi(Refresh);
         // F6.3: the in-app confirmation for stage 1, also when Claude asks (create_stock_sheet). Runs on the UI thread.
-        counts.ConfirmCreate = (rows, comment) =>
+        counts.ConfirmCreate = (rows, comment, warnings) =>
         {
             var d = System.Windows.Application.Current?.Dispatcher;
             if (d is null) return Task.FromResult(false);
-            return d.InvokeAsync(() => ConfirmCreate(rows, comment)).Task;
+            return d.InvokeAsync(() => ConfirmCreate(rows, comment, warnings)).Task;
         };
         Refresh();
     }
@@ -234,10 +234,18 @@ public sealed partial class CountsViewModel : ObservableObject
         CheckOutput = run.Output.Trim();
     }
 
-    private bool ConfirmCreate(IReadOnlyList<CountRow> rows, string comment)
+    private bool ConfirmCreate(IReadOnlyList<CountRow> rows, string comment, IReadOnlyList<string> warnings)
     {
-        var lines = rows.OrderBy(r => r.Description)
-            .Select(r => $"{r.Description} — counted {StockCountsText.N(r.Count)} (system {StockCountsText.N(r.SystemOnHand)})").ToList();
+        // Timing warnings first (items sold since counted), then the manual's checklist, then the counts.
+        // A receipt's counts carry a Note ("on hand 4 + received 24 = count 28"); the count checklist doesn't apply to them.
+        bool fromReceipt = rows.Any(r => r.Note is not null);
+        var lines = warnings.Select(w => (w.StartsWith("Receipt:", StringComparison.Ordinal) ? "ℹ " : "⚠ ") + w)
+            .Concat(fromReceipt ? [] : StockCounts.CountChecklist.Select(c => "☐ " + c))
+            .Concat(rows.OrderBy(r => r.Description)
+                .Select(r => r.Note is { } n
+                    ? $"{r.Description} — {n}"
+                    : $"{r.Description} — counted {StockCountsText.N(r.Count)} (system {StockCountsText.N(r.SystemOnHand)})"))
+            .ToList();
         var intro = (_counts.IsMock
                 ? "TEST mode (mock engine): a pretend sheet is made; eStream isn't touched. "
                 : "A new stock sheet is made in eStream and these counts are imported. It uses up a sheet number, and the same counts can't be imported twice. Nothing is posted yet. Don't touch the mouse or keyboard while it runs. ")

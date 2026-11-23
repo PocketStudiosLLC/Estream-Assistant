@@ -1,0 +1,200 @@
+eStream Assistant - Phase C: map and script new eStream screens
+=================================================================
+Give this whole file to Claude Code on the store's back-office PC (the PC that runs eStream Office and
+eStream Server). Start Claude Code in C:\eStreamAutomation with eStream Office open and logged in.
+
+Who you are working with: the store owner. They know eStream and the store well, but they're not technical.
+Explain things in plain words, one step at a time. When you need them to do something, say exactly what to click.
+
+
+0. READ FIRST, BEFORE TOUCHING ANYTHING
+---------------------------------------
+- Read C:\eStreamAutomation\eStream-map.md (the existing UI and database map) and CLAUDE.md if it's there.
+  Reuse eStreamUI.psm1 and the patterns that already work:
+    * Find controls by Name + class. AutomationIds are window handles and change every launch.
+    * Press buttons with BM_CLICK. Read edit values with UIA Current.Name, not GetWindowText.
+    * WinForms tabs don't expose tab items, so click at measured offsets. Custom-drawn check boxes and
+      radio buttons have no UIA state: use the pixel check (Test-EsChecked).
+    * Add-Type is blocked by the antivirus. Use the Reflection.Emit helpers already in eStreamUI.psm1.
+    * Execution policy is Restricted, so run scripts with: powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>
+    * Only send input when eStream is verified to be the foreground window.
+- Look at how Set-EsItem.ps1, Invoke-EsCsv.ps1, New-EsStockSheet.ps1 and Publish-EsStockSheet.ps1 are built.
+  New scripts must look and behave the same way (see section 5).
+
+SAFETY RULES (these never change)
+- The SQL database is READ-ONLY for you. SELECT only, through sqlcmd or Get-EsItem.ps1. Never INSERT, UPDATE,
+  DELETE, EXEC, or anything that writes. All changes go through eStream's own screens.
+- While mapping and testing, only touch the TEST records you create in section 1 (test items, test vendor,
+  test groups). Never edit, receive, credit, transfer or reprice a real item.
+- Never touch the owner's own stock sheets or price batches. The protected sheet and batch numbers are listed
+  in eStream-map.md. Never apply, delete or edit a price batch you didn't create.
+- Before the FIRST real save on each new screen, stop and ask the owner: "This will save <what> in eStream.
+  OK?" Wait for a yes.
+- Every script needs a -DryRun mode first. It fills in everything, then leaves WITHOUT saving (Exit / Cancel /
+  Delete the draft) and checks in the database that nothing changed.
+- If a screen behaves differently from what you expected, stop, close it without saving, and tell the owner.
+  Don't guess and don't click "Yes" on a pop-up you haven't read.
+- Back up first (with the owner's OK): ask the owner to make an eStream backup the usual way, or confirm
+  last night's backup exists, before section 1.
+
+
+1. CREATE THE TEST RECORDS (with the owner)
+-------------------------------------------
+These give you something safe to practise on. Make them in eStream by hand with the owner watching, or
+script them with the owner's OK. Every name starts with "ZZ TEST" so they sort to the bottom and nobody
+sells them by mistake.
+
+a) First check in SQL that the UPCs you plan to use don't exist (SELECT ... FROM Inventory WHERE BarCode = ...).
+   Use in-store codes that can't clash with real products, e.g. 2999990000011 and 2999990000028. Pick
+   others if those exist, and write down the ones you used.
+b) TEST VENDOR: Vendors > New Vendor, name "ZZ TEST VENDOR - ESTREAM ASSISTANT". No real account details.
+c) TEST ITEM A: Item List > New Item
+     Description  ZZ TEST ITEM A - DO NOT SELL
+     Price        99.99   (high, so a sale by mistake gets noticed)
+     Case cost    12.00, 1 pack x 12 units
+     Category     a real category the owner picks (Data Import needs one)
+     Vendor       ZZ TEST VENDOR, shelf/re-order code ZZTESTA
+     On hand 0, Min 2, Re-Order/Max 12. No deposit, no levy.
+   Also check that it does NOT get a POS button.
+d) TEST ITEM B: the same but "ZZ TEST ITEM B - DO NOT SELL", shelf code ZZTESTB.
+e) TEST MIX MATCH GROUP: Mix Match/SKU Group Maintenance > New Group "ZZ TEST GROUP". Put items A and B in it.
+   Then confirm the manual's rule: change A's price in the Item List, then check in SQL that B's
+   SellingPrice changed too. Write down what happened (does the group price change? MixMatch.MMPrice?).
+   Put both back to 99.99.
+f) Record every number in eStream-map.md under "TEST records": UPCs, vendor ID, group ID, and the category used.
+
+The owner may want the test records left in eStream for future testing. Ask before deleting anything.
+Inactive items can't be received, so leave them active.
+
+
+2. HOW TO MAP EACH SCREEN (the same steps for every task in section 3)
+-------------------------------------------------------------------
+Step 1. The owner shows you. Ask the owner to do the task once by hand on the TEST records, saying each
+        step out loud, while you write it down: menu path, every field they fill in, every pop-up and the
+        answer they give, and what they leave at the default. Ask "why" for anything unclear. The manual
+        (CMSystems.chm, the relevant topic) is in the project's Manuals folder on the dev PC. Ask the owner
+        if you need a page from it.
+Step 2. Screenshots. Take a screenshot of each window and pop-up yourself (PowerShell with System.Drawing,
+        loaded with [Reflection.Assembly]::LoadWithPartialName('System.Drawing'), saving PNGs to
+        C:\eStreamAutomation\Map\<task>\NN-<what>.png) and look at them. This is the only way to see
+        custom-drawn tabs, check boxes and radio buttons.
+Step 3. Dump the controls. For every window: the control tree (Name, ClassName, BoundingRectangle,
+        ControlType, enabled/visible). Measure the offsets of tabs and check boxes.
+Step 4. Find the data. Find which tables and columns change when the task is saved. Compare SELECTs taken
+        before and after the owner's manual run on the TEST records. The full column list is in
+        db-layout.csv (ask the owner for it, or SELECT from INFORMATION_SCHEMA.COLUMNS).
+Step 5. Write it up. Add a section for the screen to eStream-map.md in the same style as "Stock Sheet
+        Maintenance": the path, the fields, pop-ups with their exact text, buttons, quirks, and DB tables.
+Step 6. Script it, in this order: -DryRun first (fills everything, leaves without saving, verifies nothing
+        changed). Then the real run on TEST records, after asking the owner. Then read back from SQL to check
+        every value. Run each one at least 3 times, including once with a bad input (unknown UPC, vendor
+        that doesn't exist) to check that it stops cleanly and leaves no window open.
+
+
+3. THE TASKS, IN THIS ORDER
+---------------------------
+
+3.1 PRICE CHANGES BY PRICE BATCH IMPORT (the new fast engine)
+   Goal: change price / For / case cost for many items in one go, through eStream's own price batch,
+   instead of opening each item's editor. Use it for receipt cost updates, "+5% on all Pepsi", and any
+   list longer than a few items. The item editor engine (Set-EsItem / Invoke-EsCsv) stays for deposit,
+   levy, on hand, Min/Max and single items.
+
+   Find the best route. The manual says supplier files can be imported "either directly to the Inventory
+   file or to the Price Batch Maintenance routine":
+     a) Store > Data Import/Export > Inventory import, with the target set to Price Batch (look for that option).
+     b) Regular Price Change Batch Maintenance > New Batch, and see if it has its own import/add-from-file.
+   Do NOT import straight into the Inventory file. The manual says there's no going back from that.
+   Pick the route that is fastest and most reliable for 1 to 500 items, and say why in eStream-map.md.
+
+   Things to find out:
+   - The import file layout and the cross-reference Template. Save a template named
+     "eStream Assistant prices" so the import is the same every time. Which columns are required? The
+     manual says Description + UPC minimum for inventory imports. Does a price batch import need the
+     description too?
+   - How For (PriceMult) and case cost come in. Is cost per case or per unit?
+   - What happens to an item in a mix match group (test with TEST A in ZZ TEST GROUP).
+   - Apply On date. New batches default to yesterday, and pending batches dated today or later are applied
+     automatically by polling. Find how to APPLY a batch right away from the screen ("Apply" button?). Does
+     applying set MakeLabel / print labels? Does it update Products (the POS copy) as well as Inventory?
+   - PBInfo / PBDetail rows before and after: ysnApplied, ApplyOnDate, Comment, OldRetail/NewRetail, VendorID.
+
+   Scripts to make:
+     Import-EsPriceBatch.ps1 -Path <prices.csv> -Comment <text> [-DryRun]
+         prices.csv = UPC,Price,For,CaseCost (header row; blank cell = no change). Makes ONE new pending
+         batch with those lines, dated so it does NOT apply by itself, and reports the batch number.
+         -DryRun: go through the whole import up to the last confirmation, then cancel. No batch is made.
+     Apply-EsPriceBatch.ps1 -BatchId <n> [-DryRun]
+         Applies ONLY a batch that Import-EsPriceBatch made (check PBInfo.Comment starts with
+         "eStream Assistant" and the batch is in a registry file, BatchRegistry.json). Then reads back every
+         line from Inventory AND Products and writes a results CSV (Applied / Unverified per item).
+         -DryRun: checks it can be applied and shows what would change, without applying.
+   Test with TEST items A and B only.
+
+3.2 RECEIVING A DELIVERY (purchase order, then receive)
+   - Purchase Order Maintenance > New P/O for ZZ TEST VENDOR, with its UPC,Count import (CRLF CSV, as on the
+     stock sheet screen). Find where the file must go and its name, and whether it needs a header.
+   - Receiving Maintenance: receive that P/O, type an invoice number, change a case cost, Finalize.
+   - Find out: what Finalize changes (Inventory.Units, LastRec, LastCaseCost, CaseCost?), which tables get
+     rows (InvoiceHeader / InvoiceDetail?), and whether a received invoice can be undone (and how).
+   - Scripts:
+       New-EsPurchaseOrder.ps1 -VendorId <n> -Path <upc_count.csv> [-Comment x] [-DryRun]  -> P/O number
+       Receive-EsPurchaseOrder.ps1 -PONumber <n> -InvoiceNumber <text> [-CostsPath <upc_casecost.csv>] [-DryRun]
+           Without -DryRun it finalizes. Read back the stock and costs per item into the results CSV.
+
+3.3 CREDIT NOTE (returns and breakage)
+   - Credit Note Maintenance > New Credit Note for ZZ TEST VENDOR, as Breakage and as a normal return.
+     Is there a UPC,Count import? Which tables change (CreditInfo / CreditDetail, ysnBreakage)? Does it take
+     the units off on hand?
+   - Script: New-EsCreditNote.ps1 -VendorId <n> -Path <upc_count.csv> [-Breakage] [-Comment x] [-DryRun] -> credit note number
+
+3.4 LABEL BATCH (shelf labels)
+   - Labels and Signs / label batches: make a batch with TEST A and B, then print to the screen or a PDF,
+     not paper, unless the owner wants paper. Tables: LabelBatchHeader / LabelBatchDetail.
+     Does printing clear Inventory.MakeLabel?
+   - Script: Add-EsLabelBatch.ps1 -Path <upcs.csv> -Name <text> [-DryRun] -> batch number
+
+3.5 ONLY IF THE OWNER WANTS THEM (ask)
+   - Store-to-store transfer. Does the store use it at all?
+   - Repack / case break (Item List: open N units, make N repacks).
+
+3.6 SMALL FIX FOR AN EXISTING SCRIPT
+   - New-EsStockSheet.ps1: add the RESULT line from section 5 with the new sheet number. The app currently
+     has to guess the number from the text output.
+
+
+4. WHILE A SCRIPT RUNS
+-------------------
+- The owner must not touch the mouse or keyboard. Tell them before every run.
+- Every script must finish within a time limit, close every window it opened, and leave eStream on the
+  main screen, including when it fails. Use try/finally.
+- Log every step to Logs\<date>.log like the existing scripts.
+
+
+5. WHAT EVERY NEW SCRIPT MUST OUTPUT (so the app can use it)
+-------------------------------------------------------------
+- Exit code: 0 = done (or the dry run passed), 1 = failed, 2 = refused before touching anything
+  (bad input, eStream not open, protected record).
+- The LAST line of output is one JSON line starting with RESULT: e.g.
+    RESULT: {"ok":true,"dryRun":false,"id":10811,"kind":"PriceBatch","message":"Batch 10811 made with 2 items","resultsCsv":"C:\\eStreamAutomation\\Done\\pricebatch-10811_20261123-101500_results.csv"}
+  "id" is the new P/O, credit note, batch or sheet number (null for a dry run).
+- A results CSV in Done\ with the same columns as the item engine's: UPC,Description,Changes,Status,Message
+  Status is one of: DryRunOK, Applied, Unverified, Skipped, Failed.
+- Input CSVs: header row, CRLF, UPC as digits (no leading zeros needed).
+
+
+6. WHEN YOU'RE DONE, SEND THESE BACK TO THE DEV PC
+-------------------------------------------------
+Put everything in C:\eStreamAutomation\PhaseC-handoff\ and ask the owner to copy that folder to the dev PC's
+project folder (it holds store data, so it's NOT committed to GitHub):
+  - eStream-map.md (updated) and the new .ps1 scripts
+  - PhaseC-report.txt containing, for each script:
+      * exact parameters and an example command
+      * the full output of one dry run and one real run (including the RESULT line), and a sample results CSV
+      * the database tables and columns it changes, and the read-back SELECTs you used
+      * anything that surprised you, anything that can't be undone, and anything you couldn't automate
+  - the TEST record numbers (UPCs, vendor ID, group ID)
+  - an updated db-layout.csv if you found tables that aren't in it
+  - the Map\ screenshots folder (optional; useful if something needs fixing later)
+The eStream Assistant app on the dev PC will then get buttons and Claude tools for these, with a
+confirmation window before every save, the same as SAVE and stock sheet posting today.

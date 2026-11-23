@@ -61,7 +61,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public ObservableCollection<PendingRowViewModel> PendingRows { get; } = [];
     public bool HasPending => PendingRows.Count > 0;
-    public bool CanSave => _pending.CanSave;
+    /// <summary>SAVE is one step: it runs the dry run itself when the list hasn't just passed one.</summary>
+    public bool CanSave => HasPending && !IsWorking && !_pending.IsRunning;
     public string ExecutorName => _pending.Executor.Name;
     public bool ExecutorDrivesEStream => _pending.Executor.DrivesEStream;
 
@@ -69,7 +70,7 @@ public sealed partial class MainViewModel : ObservableObject
     public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(DryRunCommand), nameof(ClearPendingCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DryRunCommand), nameof(SaveCommand), nameof(ClearPendingCommand), nameof(StageReceiptCommand), nameof(ReceiptStockSheetCommand))]
     private bool _isWorking;
 
     [ObservableProperty] private string _workingText = "";
@@ -102,7 +103,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         else
         {
-            DryRunSummary = "The list changed, so it needs a new dry run.";
+            DryRunSummary = "The list changed. SAVE checks it again first.";
             DryRunLevel = StatusLevel.Warn;
         }
     }
@@ -124,12 +125,27 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Raised after a save, so the History tab reloads.</summary>
     public event EventHandler? RunFinished;
 
-    public string SaveToolTip => _pending.SaveBlockedReason ?? $"Save {_pending.RowsToSave.Count} change(s) to eStream (asks first)";
+    public string SaveToolTip => !HasPending ? "There are no pending changes."
+        : _pending.CanSave ? $"Save {_pending.RowsToSave.Count} change(s) to eStream (asks first)"
+        : "Checks every change in eStream first (dry run), then shows the list and asks before saving anything";
 
     [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task Save()
     {
         // S3: only this button saves, and only after the owner confirms the list (U7).
+        // One step for the owner: when the list hasn't just passed a dry run, run it now (S2 still holds:
+        // the save below uses exactly the CSV that passed it).
+        if (!_pending.CanSave)
+        {
+            var dry = await Task.Run(() => _pending.DryRunAsync());
+            _chat.AddContextNote($"[dry run before SAVE] {dry.Summary}");
+            RefreshPending();
+            if (!dry.Passed || !_pending.CanSave)
+            {
+                Add(FeedKind.Error, dry.Summary + " Nothing was saved. Fix or remove the rows marked in the list, then press SAVE again.");
+                return;
+            }
+        }
         var hash = _pending.LastDryRun?.Hash;
         var rows = _pending.RowsToSave;
         if (hash is null || rows.Count == 0) return;
@@ -138,8 +154,16 @@ public sealed partial class MainViewModel : ObservableObject
             Add(FeedKind.App, "Save cancelled. Nothing was changed.");
             return;
         }
+        int labelsBefore = _pending.Labels?.Count ?? 0;
         var r = await Task.Run(() => _pending.SaveAsync(hash));
-        Add(r.Ok ? FeedKind.App : FeedKind.Error, r.Summary + (r.Unverified > 0 ? " Check the Unverified rows in eStream." : ""));
+        var after = r.Summary + (r.Unverified > 0 ? " Check the Unverified rows in eStream." : "");
+        if (_pending.Executor.DrivesEStream && r.Applied > 0)
+            after += $" The registers get the changes from eStream Server within about {_settings.RegisterUpdateMinutes} minutes.";
+        int newLabels = (_pending.Labels?.Count ?? 0) - labelsBefore;
+        if (_pending.Labels is { Count: > 0 } lq)
+            after += $" {lq.Count} shelf label{(lq.Count == 1 ? "" : "s")} to print (Reports > Shelf labels to print)"
+                     + (newLabels > 0 ? $", {newLabels} new." : ".");
+        Add(r.Ok ? FeedKind.App : FeedKind.Error, after);
         _chat.AddContextNote($"[saved by the owner] {r.Summary}");
         RefreshPending();
         // The item card may show old values now.
@@ -160,6 +184,8 @@ public sealed partial class MainViewModel : ObservableObject
         _workBase = _pending.Executor.DrivesEStream
             ? $"{what} in eStream: please don't touch the mouse or keyboard."
             : $"{what} (simulated, eStream is not touched)…";
+        if (w.BatchRows > 0)
+            _workBase += $" {w.BatchRows} price change{(w.BatchRows == 1 ? "" : "s")} go{(w.BatchRows == 1 ? "es" : "")} through a price batch: eStream can take several minutes to apply it.";
         WorkingText = _workBase;
         _workStarted = DateTime.Now;
         UpdateWorkingElapsed(w.Rows);
@@ -494,6 +520,7 @@ public sealed partial class MainViewModel : ObservableObject
                     break;
                 case ChatEvent.ItemShown s when s.Lookup.Item is not null:
                     CurrentItem = new ItemCardViewModel(s.Lookup.Item, s.Lookup.Note, _codes);
+                    _ = CurrentItem.LoadContextAsync(_lookup);
                     break;
             }
             ChatStreamed?.Invoke(this, EventArgs.Empty);
@@ -687,6 +714,7 @@ public sealed partial class MainViewModel : ObservableObject
             }
 
             CurrentItem = new ItemCardViewModel(r.Item, r.Note, _codes);
+            _ = CurrentItem.LoadContextAsync(_lookup);
             ShowReceipt = false; // a scan or search: show the item card (the receipt stays open)
             var line = $"{(fromScan ? "Scanned" : "Found")}: {r.Item.Description} ({r.Item.Upc}) {CurrentItem.PriceText}";
             if (r.Item.Inactive) line += "  [INACTIVE]";

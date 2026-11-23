@@ -109,10 +109,12 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
       **Dry run** (button or Claude's `run_dry_run`) uses the mock engine or `Invoke-EsCsv.ps1 -DryRun` (Settings → *Dry runs with*),
       behind a full-window "don't touch" overlay. SAVE turns on only when the current list just passed a dry run; any add,
       edit or remove turns it off again.
-      **To check on the store PC:** the exact status strings in the results CSV, where `Done\` results land for a `-Path`
-      outside `Inbox\`, and whether Force also covers the 50% price/cost rule.
+      Engine status strings were checked against the store PC scripts (Phase C): `DryRun`/`DryRunOK`, `Saved`/`Applied`,
+      `Unverified`, `Skipped`, `Failed`.
 - [x] **Phase 4** (v0.1.2): **SAVE** shows every change as `Item — Field: Now → New` (Cancel is the default), then runs
-      `Invoke-EsCsv.ps1 -Path` from `Inbox\` with exactly the CSV that passed the dry run (SHA-256 checked). The app then reads
+      `Invoke-EsCsv.ps1 -Path` with exactly the CSV that passed the dry run (SHA-256 checked). The CSV is kept in the app's
+      runs folder, never `Inbox\`: the script only moves a file out of the Inbox when run without `-Path`, so an Inbox copy
+      would be applied again by the next plain run. The app then reads
       every value back from the database: a mismatch makes the row *Unverified*, with the values it found. An apply is
       never cancelled half-way. A save cut off by a crash is reported at the next start and listed in History; nothing
       is re-applied. **History** lists `Done\` results (newest first, filter, dry runs on/off), the rows, and matching log lines.
@@ -157,6 +159,20 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
       barcode min/max digits, protected price batches, a debug-log switch and *Open Power Automate Desktop* (6.8, 8.3).
       Every engine call is logged with its arguments, exit code and time (11), and a warm chat with no cache reads is logged
       as a warning (7.1).
+- [x] **Phase C** (store PC hand-off, 2026-11-22; scripts and map in `Handoff/`, not in git):
+      **Price batches**: when 2 or more pending rows change only price, For or case cost (automatic, no setting),
+      the dry run runs `Import-EsPriceBatch.ps1 -DryRun` for them (batch made, checked, deleted) and SAVE runs the real import,
+      then `Apply-EsPriceBatch.ps1` (no undo; eStream can take minutes). The batch is applied only if every line came out right;
+      otherwise it stays pending (dated in the past, so it never applies by itself) and the owner is told to delete it. Rows with
+      deposit, levy, on hand or min/max, items in a Mix Match group, and prices that aren't a multiple of 5 cents (the batch rounds
+      to "5 and 0") stay on the item editor. **Receipt → stock sheet** (the owner doesn't use P/Os or Receivings):
+      *Add stock (stock sheet)…* on the receipt, or Claude's `receipt_stock_sheet`, makes a sheet with
+      count = on hand + received (cases × packs × units; a negative on hand counts as 0); each receipt line can go on one sheet
+      only; posting stays on the Stock counts tab. **Labels**: *Queue in eStream…* on the shelf label list, or Claude's
+      `queue_shelf_labels`, runs `Add-EsLabelBatch.ps1` (Settings → *Label design*); queued items leave the list. Every Phase C
+      script's `RESULT:` line is parsed (the new sheet number comes from it, not from the text).
+- **One-step SAVE** (2026-11-22): SAVE runs the dry run itself when the list hasn't just passed one, then shows the
+      confirmation; if the check finds a problem nothing is saved. *Dry run* stays as an optional check.
 - [ ] Phase 7: store-PC acceptance. See [todo.md](todo.md) for everything that still needs testing.
 
 ## Still to build (needs the real scripts or the store PC)
@@ -165,9 +181,9 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
 - `PadFlowExecutor` (8.3, optional): needs a non-interactive version of the "Estream" flow and its run URL checked on the store PC.
 - Lookups through `Get-EsItem.ps1` when SQL is down (spec 10): needs the script's output format.
 
-## To check against the real scripts (TODOs in the code)
+## Checked against the real scripts
 
-The `C:\eStreamAutomation` folder hasn't been copied to the dev PC yet. When it is:
-- `FuzzyMatcher.StopWords`: copy the exact list from `Get-EsItem.ps1 -Find`.
-- `UpcNormalizer`: compare edge cases with `Get-EsItem.ps1`.
-- Results CSV status strings: read them from `Invoke-EsCsv.ps1` (needed for Phase 3).
+The store PC's scripts came back with the Phase C hand-off (`Handoff/`, kept out of git). The code TODOs are closed:
+engine status strings, the new stock sheet number (`RESULT:` line), Force covering the 50% rule, the stop words
+(`FuzzyMatcher.StopWords` ignores every word `Get-EsItem.ps1 -Find` ignores) and the UPC rules (the last digit is only
+dropped for codes of 7+ digits, as in `Get-EsItem.ps1`).

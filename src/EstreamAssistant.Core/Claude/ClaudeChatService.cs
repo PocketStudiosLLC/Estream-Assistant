@@ -392,6 +392,7 @@ public sealed class ClaudeChatService : IChatService
         {
             ChatTools.LookupItem => $"Looking up {Arg("upc")}…",
             ChatTools.FindItems => $"Searching for \"{Arg("text")}\"…",
+            ChatTools.ListItems => $"Listing every item with \"{Arg("text")}\"…",
             ChatTools.GetCodes => "Reading deposit and levy codes…",
             ChatTools.CalcPrice => "Working out the price…",
             ChatTools.StageChanges => "Adding to pending changes…",

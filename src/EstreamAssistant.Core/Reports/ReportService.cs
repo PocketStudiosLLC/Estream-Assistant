@@ -33,7 +33,7 @@ public sealed record SheetResult(Report Report, SheetSummary Sheet, IReadOnlyLis
 /// Read-only stock reports and stock sheet views (Reports tab and Claude's stock_report / stock_sheets).
 /// Nothing here changes eStream. The latest report is kept in <see cref="Current"/> for the Reports tab.
 /// </summary>
-public sealed class ReportService
+public sealed partial class ReportService
 {
     /// <summary>A difference this big (units, or dollars at cost) is called out in the sheet checks.</summary>
     public const decimal BigUnits = 10;
@@ -60,6 +60,9 @@ public sealed class ReportService
     public event EventHandler? Changed;
 
     public Report? Current => _current;
+
+    /// <summary>Shows a report made elsewhere (e.g. the shelf label list) on the Reports tab.</summary>
+    public void ShowReport(Report r) => Show(r);
 
     private void Show(Report r)
     {
@@ -198,7 +201,7 @@ public sealed class ReportService
         var kept = raw.Take(SqlItemRepository.MaxReportRows).ToList();
         int notInCache = kept.Count(l => _lookup.Cache.Get(l.Upc) is null);
         var names = await NamesAsync(kept.Select(l => l.Upc), ct).ConfigureAwait(false);
-        var lines = kept.Select(l => l with { Description = names[l.Upc] }).OrderBy(l => l.Description).ToList();
+        var lines = kept.Select(l => l with { Description = names[l.Upc], SheetClosed = info.Closed }).OrderBy(l => l.Description).ToList();
 
         var checks = SheetChecks(sheet, lines);
         if (lines.Count >= 4 && _lookup.Cache.Count > 0 && notInCache * 2 > lines.Count)
@@ -244,7 +247,7 @@ public sealed class ReportService
     {
         var checks = new List<string>();
         if (sheet.Info.Closed)
-            checks.Add("This sheet is closed in eStream, so it can't be posted again.");
+            checks.Add("This sheet is closed in eStream. Reopening or posting it again can only be done in eStream (Inventory > Period Activity).");
         else if (sheet.Protected)
             checks.Add("This is one of the owner's own sheets (protected): the app only reads it, and it can't be posted from the app.");
         else if (sheet.MadeByApp is null)
@@ -276,7 +279,12 @@ public sealed class ReportService
         if (negative.Count > 0)
             checks.Add($"{Plural(negative.Count, "item")} had negative system stock: {Names(negative, l => $"system {N(l.System)}")}. Posting sets {(negative.Count == 1 ? "it" : "them")} to the count.");
 
-        if (lines.All(l => l.OverShort == 0))
+        if (sheet.Info.Closed)
+        {
+            if (lines.Any(l => l.FromPosting))
+                checks.Add("Posting set the sheet's system numbers to the counts, so Over/short shows what posting changed on hand by.");
+        }
+        else if (lines.All(l => l.OverShort == 0))
             checks.Add("Every count equals the system number. New sheets are pre-filled with system on-hand, so this sheet may not have been counted yet.");
 
         return checks;

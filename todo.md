@@ -38,8 +38,11 @@ Everything below is built but hasn't been tried for real yet. Most of it needs t
 - [ ] Layout at 125% and 150% display scaling.
 
 ## With the real scripts (PowerShell engine)
-- [ ] Copy `C:\eStreamAutomation` to the dev PC and fix the TODOs in the code:
-  stop words, UPC edge cases, results CSV status strings, Force and the 50% rule, the new sheet number.
+- [x] Copy `C:\eStreamAutomation` to the dev PC and fix the TODOs in the code (done from the Phase C hand-off, 2026-11-22).
+- [ ] Copy the hand-off's `eStreamUI.psm1` and every `.ps1` to `C:\eStreamAutomation` on the store PC if they aren't there yet
+  (the hand-off says every script imports the new module).
+- [ ] Delete any old `assistant_*.csv` left in `C:\eStreamAutomation\Inbox` by earlier versions (they would be applied again
+  by a plain `Invoke-EsCsv.ps1` run). The app now keeps its CSVs in its own runs folder.
 - [ ] Dry run on 60410079591 (LAYS ALL DRESS 220 g) and 60410079966 (CUCMBER LAYS) passes.
 - [ ] One real SAVE, with the owner watching: Applied and verified.
 - [ ] Stock sheet: Check, then Make stock sheet with a few counts.
@@ -47,7 +50,25 @@ Everything below is built but hasn't been tried for real yet. Most of it needs t
 - [ ] A script timeout is handled (rows show Failed, app keeps working).
 - [ ] Engine calls show in the app log with exit code and time.
 
+## Phase C features (on the store PC, TEST items 2999990000011 / 2999990000028 first)
+- [ ] Price batch: stage price changes (prices ending in 0 or 5) for 2+ items (TEST items A and B are enough), dry run: the rows say "Price batch dry run OK",
+      and no new batch is left in Inventory > Price Batches.
+- [ ] Price batch SAVE (owner watching): the batch is made, then applied (can take ~3 minutes); rows show Applied, and
+      Inventory + the till prices match. The app log shows the batch number.
+- [ ] A list with one deposit/min/max row and three price rows: the one row goes through the item editor, the rest through the batch.
+- [ ] A price like $4.99 stays on the item editor (the batch would round it to $5.00).
+- [ ] Receipt → *Add stock (stock sheet)…*: the confirmation shows "on hand X + received Y = count Z" (negative on hand as 0),
+      the sheet is made, the receipt lines show "on stock sheet N", and a second press leaves them out.
+- [ ] Post that sheet from the Stock counts tab (owner's real receipt only): on hand goes up by exactly the received units.
+- [ ] Receipt pack sizes: a case line gives qty × packs × units; check a few real invoices against eStream's case sizes.
+- [ ] Reports → Shelf labels to print → *Queue in eStream…*: the labels show in Labels Print under the chosen design,
+      the owner's other queued labels are untouched, and queued items leave the app's list.
+- [ ] A "2 for" label: check how it prints on GROCERY SHELVES (Phase C saw "2 For $" with no amount).
+- [ ] Claude: "add the stock from this receipt" uses receipt_stock_sheet; "queue the labels" uses queue_shelf_labels; both ask first.
+
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).
+- [ ] Publish-EsStockSheet.ps1: give it a RESULT line and exit codes like the other scripts (hand-off suggestion).
+- [ ] Import-EsPriceBatch.ps1: a clearer per-line status than "DryRunOK" for lines in a real pending batch (the app copes as it is).
 - [ ] Power Automate Desktop executor (optional; needs a non-interactive flow).
 - [ ] Lookups through `Get-EsItem.ps1` when SQL is down.

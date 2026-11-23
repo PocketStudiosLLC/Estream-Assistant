@@ -55,7 +55,7 @@ public class ReportQueriesTests
             ("Adjustments", "Invennum", "float"),
         };
         var problem = SqlItemRepository.CompareStockSheetColumns(actual)!;
-        Assert.Contains("StockSheets.SheetNum", problem);
+        Assert.Contains("StockSheets.StockSheetID", problem);
         Assert.Contains("Adjustments.ActualUnits", problem);
         Assert.Contains("SheetID int", problem); // the real layout, for the log
         Assert.DoesNotContain("StockSheets.SheetClosed", problem.Split("Real columns")[0]);

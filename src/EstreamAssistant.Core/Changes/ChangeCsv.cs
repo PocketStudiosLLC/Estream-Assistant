@@ -44,17 +44,20 @@ public static class ChangesCsv
 public sealed record EngineResult(string Upc, string Description, string Changes, string Status, string Message)
 {
     /// <summary>
-    /// Maps the engine status text. Status values from Plan.txt: DryRun, Done/Applied,
-    /// Skipped (with reason), Failed, Unverified. Anything else is shown as-is and is NOT a success.
-    /// TODO(store PC): check the exact strings in Invoke-EsCsv.ps1 and the Done\ samples.
+    /// Maps the engine status text. Checked against the store PC scripts (Phase C, 2026-11-22):
+    /// Set-EsItem.ps1 writes DryRun / Saved (saved AND read back OK) / Unverified / Failed, Invoke-EsCsv.ps1 Skipped;
+    /// the Phase C scripts write DryRunOK / Applied / Unverified / Skipped / Failed.
+    /// Anything else is shown as-is and is NOT a success.
     /// </summary>
     public RowStatus MappedStatus
     {
         get
         {
             var s = Status.Trim();
-            if (s.Equals("DryRun", StringComparison.OrdinalIgnoreCase) || s.Equals("Dry run", StringComparison.OrdinalIgnoreCase)) return RowStatus.DryRunOk;
-            if (s.Equals("Done", StringComparison.OrdinalIgnoreCase) || s.Equals("Applied", StringComparison.OrdinalIgnoreCase)) return RowStatus.Applied;
+            if (s.Equals("DryRun", StringComparison.OrdinalIgnoreCase) || s.Equals("Dry run", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("DryRunOK", StringComparison.OrdinalIgnoreCase)) return RowStatus.DryRunOk;
+            if (s.Equals("Done", StringComparison.OrdinalIgnoreCase) || s.Equals("Applied", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("Saved", StringComparison.OrdinalIgnoreCase)) return RowStatus.Applied;
             if (s.StartsWith("Skipped", StringComparison.OrdinalIgnoreCase)) return RowStatus.Skipped;
             if (s.StartsWith("Failed", StringComparison.OrdinalIgnoreCase) || s.Equals("Error", StringComparison.OrdinalIgnoreCase)) return RowStatus.Failed;
             if (s.StartsWith("Unverified", StringComparison.OrdinalIgnoreCase)) return RowStatus.Unverified;

@@ -22,6 +22,7 @@ public sealed class PendingRowViewModel(ChangeRow row)
     public string ReasonText => string.IsNullOrWhiteSpace(Row.Request.Reason) ? "" : "Why: " + Row.Request.Reason;
     public string GmText => Row.GmNow is decimal a && Row.GmNew is decimal b ? $"GM {a:0.#}% → {b:0.#}%" : "";
     public bool GmDrops => Row.GmNew < Row.GmNow;
+    public string WarningsText => string.Join("\n", Row.Warnings.Select(w => "⚠ " + w));
 
     public string StatusText => Row.Status switch
     {

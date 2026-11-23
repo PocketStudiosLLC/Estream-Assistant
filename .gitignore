@@ -15,3 +15,10 @@ dist/
 # eStream map and exports from the store PC: store name, protected sheet numbers, store data
 eStream-map.md
 estream-for-dev/
+db-layout.csv
+
+# eStream manuals (vendor documentation): kept locally, not on GitHub
+Manuals/
+# Phase C handoff from the store PC (scripts, map, store data)
+PhaseC-handoff/
+Handoff/

@@ -13,11 +13,14 @@ public sealed partial class MainViewModel
     private ReceiptSession? _receipt;
     private ReceiptIngest? _ingest;
     private ReceiptFolder? _receiptFolder;
+    private Core.Counts.StockCounts? _counts;
 
-    /// <summary>Set once at startup by the app.</summary>
-    public void UseReceipts(ReceiptSession session, ReceiptIngest ingest, ReceiptFolder folder)
+    /// <summary>Set once at startup by the app. <paramref name="counts"/>: for receipt → stock sheet.</summary>
+    public void UseReceipts(ReceiptSession session, ReceiptIngest ingest, ReceiptFolder folder, Core.Counts.StockCounts? counts = null)
     {
         _receipt = session;
+        _counts = counts;
+        if (counts is not null) counts.Changed += (_, _) => OnUi(() => ReceiptStockSheetCommand.NotifyCanExecuteChanged());
         _ingest = ingest;
         _receiptFolder = folder;
         session.Changed += (_, _) => OnUi(RefreshReceipt);
@@ -57,9 +60,11 @@ public sealed partial class MainViewModel
     {
         if (_receipt is null) return;
         var keep = ReceiptLines.ToDictionary(l => l.Number, l => l.IsChecked);
+        var onSheet = _receipt.LinesOnStockSheets;
         ReceiptLines.Clear();
         foreach (var l in _receipt.Lines)
-            ReceiptLines.Add(new ReceiptLineViewModel(l, keep.TryGetValue(l.Number, out var c) ? c : l.Status == ReceiptLineStatus.Ready));
+            ReceiptLines.Add(new ReceiptLineViewModel(l, keep.TryGetValue(l.Number, out var c) ? c : l.Status == ReceiptLineStatus.Ready,
+                onSheet.TryGetValue(l.Number, out var sheet) ? (true, sheet) : default));
         foreach (var l in ReceiptLines) l.PropertyChanged += (_, _) => StageReceiptCommand.NotifyCanExecuteChanged();
 
         var files = _receipt.Files;
@@ -84,6 +89,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(CanShowReceipt));
         StageReceiptCommand.NotifyCanExecuteChanged();
         FinishReceiptCommand.NotifyCanExecuteChanged();
+        ReceiptStockSheetCommand.NotifyCanExecuteChanged();
     }
 
     private bool _wasReceiptOpen;
@@ -204,9 +210,34 @@ public sealed partial class MainViewModel
         var text = $"Added {staged.Count} receipt line{(staged.Count == 1 ? "" : "s")} to pending changes."
             + string.Concat(staged.Select(o => $"\n{o.Description}: {o.ChangesText}"))
             + string.Concat(skipped.Select(o => $"\nSkipped {o.Description}: {o.Message}"));
-        Add(skipped.Count > 0 && staged.Count == 0 ? FeedKind.Error : FeedKind.App, text + (staged.Count > 0 ? "\nIt needs a dry run before SAVE." : ""));
+        if (staged.Count > 0)
+            text += "\nIt needs a dry run before SAVE. This only changes prices and costs: the stock isn't added."
+                    + " To add the stock, press \"Add stock (stock sheet)…\" on the receipt, then post the sheet on the Stock counts tab.";
+        text += string.Concat(staged.SelectMany(o => o.Warnings).Distinct().Select(w => "\n⚠ " + w));
+        Add(skipped.Count > 0 && staged.Count == 0 ? FeedKind.Error : FeedKind.App, text);
         _chat.AddContextNote("[owner staged from the receipt] " + string.Join("; ", staged.Select(o => $"{o.Description}: {o.ChangesText}")));
         foreach (var l in ReceiptLines.Where(l => numbers.Contains(l.Number))) l.IsChecked = false;
+    }
+
+    private bool CanReceiptStockSheet() => _counts is { IsRunning: false } && !IsWorking && _receipt is not null
+        && ReceiptLines.Any(l => l.Line.Item is { Inactive: false } && l.Line.ReceivedUnits > 0 && !l.StockText.StartsWith("Stock: on stock sheet", StringComparison.Ordinal));
+
+    /// <summary>
+    /// Phase C (owner's decision): received stock goes in through a stock sheet, Count = on hand + received
+    /// (a negative on hand counts as 0). Stage 1 only, after the owner confirms the counts; posting is on the Stock counts tab.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanReceiptStockSheet))]
+    private async Task ReceiptStockSheet()
+    {
+        if (_receipt is null || _counts is null) return;
+        var (run, rc) = await Task.Run(() => _receipt.MakeStockSheetAsync(_counts, []));
+        var text = run.Message;
+        if (run.SheetId is int id)
+            text = $"Stock sheet {id} made from the receipt ({rc.Rows.Count} item{(rc.Rows.Count == 1 ? "" : "s")}). The stock isn't added yet: " +
+                   "post the sheet on the Stock counts tab (post check, then type the number)." +
+                   (rc.Problems.Count > 0 ? "\nLeft out: " + string.Join("\n", rc.Problems) : "");
+        Add(run.Ok ? FeedKind.App : FeedKind.Error, text);
+        _chat.AddContextNote($"[owner made a stock sheet from the receipt] {run.Message}");
     }
 
     private bool CanFinishReceipt() => HasReceipt && !IsWorking;

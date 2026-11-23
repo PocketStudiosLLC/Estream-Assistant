@@ -113,6 +113,8 @@
                         <Ellipse Style="{StaticResource StatusDot}" Fill="{Binding ClaudeStatus, Converter={StaticResource StatusBrush}}" />
                         <TextBlock Text="Claude" VerticalAlignment="Center" />
                     </StackPanel>
+                    <Button Content="?" Click="Help_Click" FontSize="20" FontWeight="Bold" MinWidth="42" MinHeight="42" Padding="0"
+                            Margin="12,0,0,0" ToolTip="How to use eStream Assistant (F1)" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -247,7 +249,7 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Grid.RowDefinitions>
-                                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
                                         </Grid.RowDefinitions>
                                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Case cost" Style="{StaticResource FieldLabel}" />
                                         <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding CaseCostText}" Style="{StaticResource FieldValue}" />
@@ -269,7 +271,19 @@
                                         <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SoldText}" Style="{StaticResource FieldValue}" />
                                         <TextBlock Grid.Row="4" Grid.Column="2" Text="Updated" Style="{StaticResource FieldLabel}" />
                                         <TextBlock Grid.Row="4" Grid.Column="3" Text="{Binding LastUpdatedText}" Style="{StaticResource FieldValue}" />
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Sales" Style="{StaticResource FieldLabel}" ToolTip="Units sold each of the last 4 weeks, newest first" />
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SalesText}" Style="{StaticResource FieldValue}" />
+                                        <TextBlock Grid.Row="5" Grid.Column="2" Text="Received" Style="{StaticResource FieldLabel}" ToolTip="Last received on an invoice" />
+                                        <TextBlock Grid.Row="5" Grid.Column="3" Text="{Binding LastReceivedText}" Style="{StaticResource FieldValue}" />
                                     </Grid>
+                                    <ItemsControl ItemsSource="{Binding ContextNotes}" Margin="0,8,0,0"
+                                                  Visibility="{Binding HasContext, Converter={StaticResource Visible}}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding StringFormat=• {0}}" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="0,1" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                     <TextBlock Text="{Binding Note}" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="0,8,0,0"
                                                Visibility="{Binding Note, Converter={StaticResource Visible}}" />
                                     <TextBlock Text="{Binding CaseSizeWarning}" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="0,4,0,0"
@@ -307,6 +321,8 @@
                                             <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding Reason, UpdateSourceTrigger=PropertyChanged}" Margin="0,3"
                                                      ToolTip="Optional, e.g. new cost from the Pepsi invoice" />
                                         </Grid>
+                                        <TextBlock Text="On hand: for stock corrections a stock count is better. It leaves a record in eStream; a direct change doesn't."
+                                                   TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource Muted}" Margin="0,4,0,0" />
                                         <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{StaticResource Warning}" Margin="0,4,0,0"
                                                    Visibility="{Binding Message, Converter={StaticResource Visible}}" />
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
@@ -367,6 +383,9 @@
                                     <Button DockPanel.Dock="Right" Content="Add ticked to pending" Style="{StaticResource PrimaryButton}" Command="{Binding StageReceiptCommand}"
                                             ToolTipService.ShowOnDisabled="True"
                                             ToolTip="Puts the new case cost (and the new price, where there is one) of each ticked line in Pending changes. Nothing is saved." />
+                                    <Button DockPanel.Dock="Right" Content="Add stock (stock sheet)…" Command="{Binding ReceiptStockSheetCommand}" Margin="0,0,8,0"
+                                            ToolTipService.ShowOnDisabled="True"
+                                            ToolTip="Makes a stock sheet with on hand + the units received for every matched line (asks first). The stock changes when you post it on the Stock counts tab." />
                                     <TextBlock Text="Costs leave out deposits and eco fees. New case costs are only used for the lines you tick." FontSize="12"
                                                Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center" />
                                 </DockPanel>
@@ -396,6 +415,8 @@
                                                                        Visibility="{Binding CostMath, Converter={StaticResource Visible}}" />
                                                             <TextBlock x:Name="Price" Text="{Binding PriceText}" FontSize="14" TextWrapping="Wrap"
                                                                        Visibility="{Binding PriceText, Converter={StaticResource Visible}}" />
+                                                            <TextBlock Text="{Binding StockText}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                                                       Visibility="{Binding StockText, Converter={StaticResource Visible}}" />
                                                             <TextBlock Text="{Binding WarningsText}" FontSize="13" Foreground="{StaticResource Warning}" TextWrapping="Wrap"
                                                                        Visibility="{Binding WarningsText, Converter={StaticResource Visible}}" />
                                                             <TextBlock Text="{Binding NoteText}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
@@ -446,7 +467,7 @@
                                     </DockPanel>
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                         <Button Content="Dry run" Style="{StaticResource PrimaryButton}" Command="{Binding DryRunCommand}"
-                                                ToolTip="Types each change into eStream, then exits WITHOUT saving, to check it works" />
+                                                ToolTip="Optional: check the list in eStream without saving. SAVE does this check by itself." />
                                         <Button Content="SAVE" Style="{StaticResource SaveButton}" Command="{Binding SaveCommand}"
                                                 ToolTipService.ShowOnDisabled="True" ToolTip="{Binding SaveToolTip}" />
                                         <Button Content="Clear" Command="{Binding ClearPendingCommand}" />
@@ -484,6 +505,8 @@
                                                                 <TextBlock x:Name="Gm" Text="{Binding GmText}" FontSize="13" Foreground="{StaticResource Muted}"
                                                                            Visibility="{Binding GmText, Converter={StaticResource Visible}}" />
                                                                 <TextBlock Text="{Binding Message}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
+                                                                <TextBlock Text="{Binding WarningsText}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource Warning}" Margin="0,2,0,0"
+                                                                           Visibility="{Binding WarningsText, Converter={StaticResource Visible}}" />
                                                                 <TextBlock Text="{Binding ReasonText}" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
                                                                            Visibility="{Binding ReasonText, Converter={StaticResource Visible}}" />
                                                                 <TextBlock Text="Large change allowed by the owner" FontSize="12" Foreground="{StaticResource Warning}"
@@ -803,11 +826,35 @@
                                     <TextBlock Text="Sheet # (optional)" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{StaticResource Placeholder}"
                                                Visibility="{Binding Text, ElementName=ReportSheetBox, Converter={StaticResource Hidden}}" />
                                 </Grid>
+                                <StackPanel Orientation="Horizontal" Visibility="{Binding IsOrderChoice, Converter={StaticResource Visible}}">
+                                    <Grid Width="190" Margin="0,0,10,4">
+                                        <TextBox x:Name="ReportVendorBox" Text="{Binding VendorText, UpdateSourceTrigger=PropertyChanged}" MinHeight="34"
+                                                 ToolTip="Vendor number or part of the name (pick Vendors to list them)" />
+                                        <TextBlock Text="Vendor # or name" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{StaticResource Placeholder}"
+                                                   Visibility="{Binding Text, ElementName=ReportVendorBox, Converter={StaticResource Hidden}}" />
+                                    </Grid>
+                                    <ComboBox ItemsSource="{Binding OrderMethods}" SelectedIndex="{Binding OrderMethodIndex}" MinWidth="200" Margin="0,0,10,4"
+                                              ToolTip="The same three options as eStream's Suggested Order form" />
+                                    <StackPanel Orientation="Horizontal" Visibility="{Binding IsHistoryMethod, Converter={StaticResource Visible}}">
+                                        <TextBlock Text="Days of sales" VerticalAlignment="Center" Margin="0,0,4,4" />
+                                        <TextBox Text="{Binding HistoryDays, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,4" />
+                                        <TextBlock Text="Days of stock" VerticalAlignment="Center" Margin="0,0,4,4" />
+                                        <TextBox Text="{Binding DaysNeeded, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,4" />
+                                    </StackPanel>
+                                </StackPanel>
                                 <CheckBox Content="Include closed sheets" IsChecked="{Binding IncludeClosed}" VerticalAlignment="Center" Margin="0,0,14,4"
                                           Foreground="{StaticResource Text}" Visibility="{Binding IsSheetChoice, Converter={StaticResource Visible}}" />
                                 <Button Content="Show" Command="{Binding RunCommand}" Style="{StaticResource PrimaryButton}" MinWidth="90" Margin="0,0,16,4" />
                                 <Button Content="Export CSV…" Command="{Binding ExportCsvCommand}" Margin="0,0,8,4" ToolTip="Save this report as a CSV file (opens in Excel)" />
                                 <Button Content="Print…" Command="{Binding PrintCommand}" Margin="0,0,8,4" />
+                                <Button Content="{Binding ImportButtonText}" Command="{Binding SaveImportCommand}" Margin="0,0,8,4"
+                                        Visibility="{Binding HasImport, Converter={StaticResource Visible}}"
+                                        ToolTip="Save the quantities as a UPC,Count file that eStream can import" />
+                                <Button Content="Queue in eStream…" Command="{Binding QueueLabelsCommand}" Margin="0,0,8,4"
+                                        Visibility="{Binding IsLabels, Converter={StaticResource Visible}}"
+                                        ToolTip="Add these labels to eStream's label queue (asks first). Nothing is printed: print them from Labels Print in eStream." />
+                                <Button Content="Clear list…" Command="{Binding ClearLabelsCommand}" Margin="0,0,8,4"
+                                        Visibility="{Binding IsLabels, Converter={StaticResource Visible}}" ToolTip="Empty the shelf label list once the labels are out" />
                                 <Button Content="All sheets" Command="{Binding OpenSheetListCommand}" Margin="0,0,8,4"
                                         Visibility="{Binding IsSheet, Converter={StaticResource Visible}}" ToolTip="Back to the list of stock sheets" />
                             </WrapPanel>
@@ -952,7 +999,7 @@
                                 <TextBlock Text="ESTREAM" Style="{StaticResource SectionTitle}" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
                                     <TextBlock Text="Data source" Style="{StaticResource FieldLabel}" />
                                     <ComboBox Grid.Column="1" Margin="0,4" ItemsSource="{Binding DataSources}" SelectedItem="{Binding DataSource}"
                                               ToolTip="Mock = sample data on the dev PC. Sql = the real eStream database (read-only), on the store PC." />
@@ -971,7 +1018,10 @@
                                     <TextBlock Grid.Row="6" Text="Protected batches" Style="{StaticResource FieldLabel}" />
                                     <TextBox Grid.Row="6" Grid.Column="1" Margin="0,4" Text="{Binding ProtectedBatches}"
                                              ToolTip="Pending price batch numbers that aren't the app's. Kept on this PC only." />
-                                    <Button Grid.Row="7" Grid.Column="1" Content="Open Power Automate Desktop" Command="{Binding OpenPadFlowCommand}"
+                                    <TextBlock Grid.Row="8" Text="Label design" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Grid.Row="8" Grid.Column="1" Margin="0,4" Text="{Binding LabelDesign}"
+                                             ToolTip="The eStream label design &quot;Queue in eStream&quot; adds shelf labels to, by name or number, e.g. GROCERY SHELVES or 10027." />
+                                    <Button Grid.Row="9" Grid.Column="1" Content="Open Power Automate Desktop" Command="{Binding OpenPadFlowCommand}"
                                             HorizontalAlignment="Left" Margin="0,6,0,0"
                                             ToolTip="For running the &quot;Estream&quot; flow by hand. The app itself runs the scripts directly." />
                                     <TextBlock Grid.Row="4" Text="Dry runs with" Style="{StaticResource FieldLabel}" />

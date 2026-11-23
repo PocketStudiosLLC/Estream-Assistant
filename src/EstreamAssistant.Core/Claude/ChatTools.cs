@@ -17,6 +17,7 @@ public static class ChatTools
 {
     public const string LookupItem = "lookup_item";
     public const string FindItems = "find_items";
+    public const string ListItems = "list_items";
     public const string GetCodes = "get_codes";
     public const string CalcPrice = "calc_price";
     public const string StageChanges = "stage_changes";
@@ -27,6 +28,10 @@ public static class ChatTools
     public const string PriceReceiptLines = "price_receipt_lines";
     public const string StockReport = "stock_report";
     public const string StockSheets = "stock_sheets";
+    public const string StoreReport = "store_report";
+    public const string ItemSales = "item_sales";
+    public const string ReceiptStockSheet = "receipt_stock_sheet";
+    public const string QueueShelfLabels = "queue_shelf_labels";
 
     /// <param name="Strict">false for simple read-only tools: they don't count toward the strict-schema limits,
     /// and ToolExecutor re-checks every input anyway.</param>
@@ -56,6 +61,17 @@ public static class ChatTools
               "max":{"type":"integer","description":"How many matches to return, 1 to 8. Use 8 unless told otherwise."}
             },"required":["text","max"],"additionalProperties":false}
             """),
+        new(ListItems,
+            "List EVERY eStream item whose name contains a brand or keyword, e.g. all 'lays' or all 'coke 2l'. Read-only. " +
+            "Ignores capitals, apostrophes and spacing (LAYS, Lays, LAY'S and LAY S all match 'lays'), so ONE call finds them all; " +
+            "never repeat it with other spellings or capitals. Every word given must be in the name. Returns the total count and the items " +
+            "(UPC, name, units sold). Use find_items instead to pin down one specific item.",
+            """
+            {"type":"object","properties":{
+              "text":{"type":"string","description":"The brand or keyword(s), e.g. 'lays' or 'lays 40g'."},
+              "include_inactive":{"type":"boolean","description":"true to include inactive items. Use false unless the owner asks for them."}
+            },"required":["text","include_inactive"],"additionalProperties":false}
+            """, Strict: false),
         new(GetCodes,
             "List eStream's deposit codes and fee/levy codes with their dollar amounts.",
             """
@@ -113,6 +129,32 @@ public static class ChatTools
               "include_inactive":{"type":"boolean","description":"true to include inactive items. Use false unless the owner asks for them."}
             },"required":["filter","include_inactive"],"additionalProperties":false}
             """, Strict: false),
+        new(StoreReport,
+            "Store reports, read-only. report: suggested_order (what to order from one vendor, using eStream's own suggested-order math), " +
+            "vendors (list vendors), margins (items below cost, at cost, with no cost or no price, or a suspicious 1 x 1 case size), " +
+            "margins_with_targets (the same plus items under their category's target GP%), stock_value (stock value at cost and retail by category), " +
+            "mix_match_groups, specials (special events on now / coming), price_batches (pending price batches and which apply by themselves), " +
+            "estream_label_flags (items eStream has flagged for a new shelf label), shelf_labels (prices saved by this app that need new shelf labels). " +
+            "The full list goes to the Reports tab; you get totals and the first rows. Nothing is ordered or changed.",
+            """
+            {"type":"object","properties":{
+              "report":{"type":"string","enum":["suggested_order","vendors","margins","margins_with_targets","stock_value","mix_match_groups","specials","price_batches","estream_label_flags","shelf_labels"]},
+              "vendor":{"type":"string","description":"suggested_order only: vendor number or part of its name. Empty string otherwise."},
+              "method":{"type":"string","enum":["reorder_quantity","top_up_to_max","sales_history"],
+                "description":"suggested_order only. reorder_quantity: order the Re-Order/Max amount when on hand is at or below Min. top_up_to_max: order up to Re-Order/Max when on hand is at or below Min. sales_history: Min + sold per day x days_needed - on hand. Use the owner's choice; default top_up_to_max."},
+              "history_days":{"type":"integer","description":"sales_history only: days of sales to look at (e.g. 28). 0 for the default (28)."},
+              "days_needed":{"type":"integer","description":"sales_history only: days of stock the order should cover (e.g. 7). 0 for the default (7)."}
+            },"required":["report","vendor","method","history_days","days_needed"],"additionalProperties":false}
+            """, Strict: false),
+        new(ItemSales,
+            "One item's sales from the registers, day by day (read-only): units and dollars per day, units per day, and how many days the stock on hand lasts. " +
+            "The day-by-day list goes to the Reports tab.",
+            """
+            {"type":"object","properties":{
+              "upc":{"type":"string","description":"The item's UPC."},
+              "days":{"type":"integer","description":"How many days back, 1 to 366 (e.g. 7, 30, 90)."}
+            },"required":["upc","days"],"additionalProperties":false}
+            """, Strict: false),
         new(StockSheets,
             "Stock sheets in eStream, read-only. With sheet=0: lists the stock sheets (open ones first) with their cut-off date, comment " +
             "and number of items. With a sheet number: that sheet's items (system vs counted, over/short), totals, and checks to look at " +
@@ -146,6 +188,22 @@ public static class ChatTools
               "comment":{"type":"string","description":"Short sheet comment, e.g. 'Chips aisle'. Up to 60 characters."}
             },"required":["comment"],"additionalProperties":false}
             """),
+        new(ReceiptStockSheet,
+            "Receipts: add the received stock to eStream through a stock sheet (stage 1). For each receipt line the app works out " +
+            "count = on hand now + units received (cases x packs x units; a negative on hand counts as 0), makes a new stock sheet and imports " +
+            "those counts. The owner gets a confirmation window first. Only call it when the owner asks to add or receive the stock. " +
+            "Lines already on a stock sheet are left out. This does NOT post the sheet: posting (no undo) is only the owner's button on the Stock counts tab.",
+            """
+            {"type":"object","properties":{
+              "lines":{"type":"array","items":{"type":"integer"},"description":"Receipt line numbers; empty for every matched line."}
+            },"required":["lines"],"additionalProperties":false}
+            """, Strict: false),
+        new(QueueShelfLabels,
+            "Shelf labels: queue the app's whole 'Shelf labels to print' list in eStream (in the label design from Settings), so the owner " +
+            "can print them from eStream's Labels Print. Nothing is printed. The owner gets a confirmation window first. Only call it when the owner asks.",
+            """
+            {"type":"object","properties":{},"required":[],"additionalProperties":false}
+            """, Strict: false),
         new(ShowReceiptLines,
             "Receipts: put the lines you read from the attached receipt or invoice into the owner's receipt table. " +
             "The app matches each line to an eStream item (UPC first, then name) and works out the unit cost itself " +

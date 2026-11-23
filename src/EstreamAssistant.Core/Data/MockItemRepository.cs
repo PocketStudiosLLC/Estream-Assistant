@@ -61,7 +61,189 @@ public sealed class MockItemRepository : IItemRepository
     /// </summary>
     public void SimulateEngineSave(Item updated)
     {
-        lock (_items) _items[updated.Upc] = updated;
+        lock (_items)
+        {
+            var before = _items.GetValueOrDefault(updated.Upc);
+            _items[updated.Upc] = updated;
+            // Like eStream: a new price on one Mix Match item changes the whole group.
+            if (updated.MixMatchId > 0 && before is not null && (before.Price != updated.Price || before.For != updated.For))
+                foreach (var other in _items.Values.Where(i => i.MixMatchId == updated.MixMatchId && i.Upc != updated.Upc && !i.Inactive).ToList())
+                    _items[other.Upc] = other with { Price = updated.Price, For = updated.For, LastUpdated = updated.LastUpdated };
+        }
+    }
+
+    // --- mix match groups, specials and price batches (MOCK, made up) -------------------
+
+    public Dictionary<int, (string Description, decimal Price)> Groups { get; } = new()
+    {
+        [12] = ("LAYS 220-235G (sample)", 4.29m),
+    };
+
+    /// <summary>Dates are relative to today so the samples stay current.</summary>
+    public List<(long Upc, ItemSpecial Special)> Specials { get; } =
+    [
+        (28400090360, new ItemSpecial { EventId = 501, Title = "Weekend flyer (sample)", Start = DateTime.Today.AddDays(-2), End = DateTime.Today.AddDays(5), Price = 3.99m }),
+        (67000000409, new ItemSpecial { EventId = 502, Title = "Pop sale (sample)", Start = DateTime.Today.AddDays(7), End = DateTime.Today.AddDays(13), Price = 2.99m }),
+    ];
+
+    public List<(long Upc, PendingBatchLine Line)> Batches { get; } =
+    [
+        (69000002056, new PendingBatchLine { BatchId = 10208, ApplyOn = DateTime.Today.AddDays(-1), Comment = "Vendor cost update (sample)", NewPrice = 3.99m, NewCaseCost = 20.40m }),
+        (57000002152, new PendingBatchLine { BatchId = 10211, ApplyOn = DateTime.Today.AddDays(3), Comment = "Price increase (sample)", NewPrice = 5.79m, NewCaseCost = 41.40m }),
+    ];
+
+    public Task<string?> CheckTablesAsync(DbFeature feature, CancellationToken ct = default) => Task.FromResult<string?>(null);
+
+    public async Task<ItemContext> GetItemContextAsync(Item item, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        MixMatchGroup? group = null;
+        lock (_items)
+        {
+            if (item.MixMatchId > 0)
+            {
+                var (desc, price) = Groups.GetValueOrDefault(item.MixMatchId, ("", 0m));
+                group = new MixMatchGroup
+                {
+                    Id = item.MixMatchId,
+                    Description = desc,
+                    Price = price,
+                    Others = _items.Values.Where(i => i.MixMatchId == item.MixMatchId && i.Upc != item.Upc && !i.Inactive)
+                        .Select(i => new GroupMember(i.Upc, i.Price, i.For)).ToList(),
+                };
+            }
+        }
+        return new ItemContext
+        {
+            Group = group,
+            Specials = Specials.Where(s => s.Upc == item.Upc && s.Special.End.Date >= DateTime.Today).Select(s => s.Special).ToList(),
+            Batches = Batches.Where(b => b.Upc == item.Upc).Select(b => b.Line).ToList(),
+        };
+    }
+
+    // --- store reports (sample data) ------------------------------------------------
+
+    private static readonly VendorInfo[] SampleVendors =
+    [
+        new(1, "FRITO LAY (sample)", false, 0), new(2, "COCA-COLA (sample)", false, 0),
+        new(3, "PEPSI (sample)", false, 0), new(4, "LOCAL WHOLESALE (sample)", false, 0), new(9, "OLD SUPPLIER (sample)", true, 0),
+    ];
+
+    /// <summary>Sample vendor by UPC prefix.</summary>
+    internal static int VendorOf(long upc) => (upc / 100000) switch
+    {
+        604100 or 284000 or 65633 => 1,
+        670000 => 2,
+        690000 or 611269 => 3,
+        _ => 4,
+    };
+
+    private static readonly CategoryInfo[] SampleCategories =
+    [
+        new(10, "CHIPS & SNACKS", 1, "GROCERY", 35), new(20, "SOFT DRINKS", 2, "BEVERAGE", 30), new(30, "DAIRY & EGGS", 3, "PERISHABLE", 25),
+        new(40, "GROCERY", 1, "GROCERY", 30), new(50, "PRODUCE", 3, "PERISHABLE", 40),
+    ];
+
+    internal static int CategoryOf(Item i) => i.CategoryId != 0 ? i.CategoryId : (i.Upc / 100000) switch
+    {
+        604100 or 284000 or 65633 => 10,
+        670000 or 690000 or 611269 => 20,
+        687000 or 620000 => 30,
+        0 => 50,
+        _ => 40,
+    };
+
+    private List<Item> Active() { lock (_items) return _items.Values.Where(i => !i.Inactive).ToList(); }
+
+    public async Task<IReadOnlyList<VendorInfo>> GetVendorsAsync(CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        List<Item> all;
+        lock (_items) all = _items.Values.ToList();
+        return SampleVendors.Select(v => v with { Items = all.Count(i => VendorOf(i.Upc) == v.Id && v.Id != 9) }).ToList();
+    }
+
+    public async Task<IReadOnlyList<OrderLine>> GetOrderLinesAsync(int vendorId, DateTime salesFrom, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        int days = Math.Max(1, (DateTime.Today - salesFrom.Date).Days + 1);
+        List<Item> all;
+        lock (_items) all = _items.Values.Where(i => VendorOf(i.Upc) == vendorId && vendorId != 9).ToList();
+        return all.Select(i => new OrderLine
+        {
+            Upc = i.Upc,
+            Description = i.Description,
+            VendorCode = i.ShelfCode,
+            CaseCost = i.CaseCost,
+            PacksPerCase = i.PacksPerCase,
+            UnitsPerPack = i.UnitsPerPack,
+            OnHand = i.OnHand,
+            Min = i.Min,
+            Max = i.Max,
+            PackQuantity = i.PacksPerCase * i.UnitsPerPack is var u && u is > 1 and <= 24 ? u : 0,
+            // Made-up: roughly a week's share of the 4-week sales per 7 days of history.
+            SoldInPeriod = Math.Round(i.FourWeekSales / 28m * days),
+            BackOrdered = i.BackOrdered,
+            Inactive = i.Inactive,
+        }).ToList();
+    }
+
+    public async Task<IReadOnlyList<ItemFacts>> GetItemFactsAsync(CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        return Active().Select(i => new ItemFacts
+        {
+            Upc = i.Upc, OnHand = i.OnHand, UnitCost = i.UnitCost, Price = i.Price, For = i.For, CaseCost = i.CaseCost,
+            PacksPerCase = i.PacksPerCase, UnitsPerPack = i.UnitsPerPack, CategoryId = CategoryOf(i), GmPct = i.GmPct,
+            // Sample: eStream has two items flagged for labels.
+            MakeLabel = i.Upc is 68000001236 or 65633001015, Sold = i.Sold,
+        }).ToList();
+    }
+
+    public async Task<IReadOnlyList<CategoryInfo>> GetCategoriesAsync(CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        return SampleCategories;
+    }
+
+    public async Task<IReadOnlyList<MixMatchInfo>> GetMixMatchGroupsAsync(CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        var active = Active();
+        return Groups.Select(g => new MixMatchInfo(g.Key, g.Value.Description, g.Value.Price, active.Count(i => i.MixMatchId == g.Key))).ToList();
+    }
+
+    public async Task<IReadOnlyList<SpecialEventInfo>> GetSpecialEventsAsync(CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        return Specials.GroupBy(s => s.Special.EventId)
+            .Select(g => new SpecialEventInfo(g.Key, g.First().Special.Title, g.First().Special.Start, g.First().Special.End, g.Count()))
+            .Where(e => e.End >= DateTime.Today.AddDays(-7)).OrderBy(e => e.Start).ToList();
+    }
+
+    public async Task<IReadOnlyList<PriceBatchInfo>> GetPendingBatchesAsync(CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        return Batches.GroupBy(b => b.Line.BatchId)
+            .Select(g => new PriceBatchInfo(g.Key, g.First().Line.ApplyOn, g.First().Line.Comment, g.Count(), 0)).OrderByDescending(b => b.Id).ToList();
+    }
+
+    public async Task<IReadOnlyList<DailySales>> GetDailySalesAsync(long upc, DateTime from, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        Item? item;
+        lock (_items) item = _items.GetValueOrDefault(upc);
+        if (item is null) return [];
+        var list = new List<DailySales>();
+        // Made-up but steady: the weekly figure spread over the days, a bit busier on weekends.
+        for (var d = DateTime.Today; d >= from.Date && list.Count < 400; d = d.AddDays(-1))
+        {
+            int week = Math.Min(3, (DateTime.Today - d).Days / 7);
+            var perDay = item.WeekSales.Count > week ? item.WeekSales[week] / 7m : 0;
+            var qty = Math.Round(perDay * (d.DayOfWeek is DayOfWeek.Friday or DayOfWeek.Saturday ? 1.4m : 0.85m));
+            list.Add(new DailySales(d, qty, qty * item.Price / item.For));
+        }
+        return list;
     }
 
     public Task<bool> PingAsync(CancellationToken ct = default) => Task.FromResult(true);
@@ -92,7 +274,7 @@ public sealed class MockItemRepository : IItemRepository
     public List<StockSheetInfo> Sheets { get; } =
     [
         new() { Id = 9002, CloseDate = new DateTime(2026, 11, 17), Comment = "Chips aisle (sample)", Supervisor = "OWNER", Closed = false, Lines = 4 },
-        new() { Id = 9001, CloseDate = new DateTime(2026, 10, 30), Comment = "Drinks cooler (sample)", Supervisor = "OWNER", Closed = true, Lines = 3 },
+        new() { Id = 9001, CloseDate = new DateTime(2026, 10, 30), Comment = "Drinks cooler (sample, posted)", Supervisor = "OWNER", Closed = true, Lines = 3 },
     ];
 
     public Dictionary<int, List<StockSheetLine>> SheetLines { get; } = new()
@@ -104,11 +286,12 @@ public sealed class MockItemRepository : IItemRepository
             new() { Upc = 28400090360, System = 7, Counted = 0, UnitCost = 3.30m },
             new() { Upc = 60410041277, System = -3, Counted = 20, UnitCost = 3.30m },
         ],
+        // Posted: eStream sets System = Counted, and the posted change is in Adjustment.
         [9001] =
         [
-            new() { Upc = 67000000409, System = 30, Counted = 28, UnitCost = 2.52m },
-            new() { Upc = 69000002056, System = 16, Counted = 16, UnitCost = 2.40m },
-            new() { Upc = 61126999100, System = 2, Counted = 5, UnitCost = 2.17m },
+            new() { Upc = 67000000409, System = 28, Counted = 28, Adjustment = -2, UnitCost = 2.52m, SheetClosed = true },
+            new() { Upc = 69000002056, System = 16, Counted = 16, Adjustment = 0, UnitCost = 2.40m, SheetClosed = true },
+            new() { Upc = 61126999100, System = 5, Counted = 5, Adjustment = 3, UnitCost = 2.17m, SheetClosed = true },
         ],
     };
 
@@ -196,7 +379,12 @@ public sealed class MockItemRepository : IItemRepository
         Mk(60410079591, "LAYS ALL DRESS 220 g", 4.29m, 1, 52.80m, 1, 16, 10, sold: 412, onHand: 14, min: 6, max: 24),
         Mk(60410079966, "CUCMBER LAYS", 4.29m, 1, 52.80m, 1, 16, 0, sold: 120, onHand: 9, min: 4, max: 16),
         Mk(60410004128, "LAY'S CUCUMBER 40G", 1.79m, 1, 30.00m, 1, 30, 0, sold: 88, onHand: 22, min: 10, max: 40),
-        Mk(60410041277, "LAYS CLASSIC 235G", 4.29m, 1, 52.80m, 1, 16, 0, sold: 530, onHand: 18, min: 6, max: 24),
+        // Mix Match group 12 (sample): a price change on one of these changes both.
+        Mk(60410041277, "LAYS CLASSIC 235G", 4.29m, 1, 52.80m, 1, 16, 0, sold: 530, onHand: 18, min: 6, max: 24, mixMatch: 12),
+        // Same brand written different ways (lower case, split apostrophe, run together): for list_items.
+        Mk(60410041444, "lays salt & vinegar 235g", 4.29m, 1, 52.80m, 1, 16, 0, sold: 140, onHand: 8, min: 0, max: 0, mixMatch: 12),
+        Mk(60410040011, "LAY S BBQ 40G", 1.79m, 1, 30.00m, 1, 30, 0, sold: 61, onHand: 15, min: 0, max: 0),
+        Mk(60410090055, "LAYSKETTLE JALAPENO", 4.49m, 1, 52.80m, 1, 16, 0, sold: 35, onHand: 6, min: 0, max: 0),
         Mk(67000000409, "COKE 2L", 3.99m, 1, 20.16m, 1, 8, 20, sold: 610, onHand: 30, min: 12, max: 48, levy: 1),
         Mk(67000001123, "COCA COLA 355ML 12PK", 9.49m, 1, 15.20m, 2, 1, 120, sold: 240, onHand: 11, min: 4, max: 16),
         Mk(69000002056, "PEPSI 2L", 3.79m, 1, 19.20m, 1, 8, 20, sold: 300, onHand: 16, min: 8, max: 32, levy: 1),
@@ -228,7 +416,7 @@ public sealed class MockItemRepository : IItemRepository
         ]);
 
     private static Item Mk(long upc, string desc, decimal price, int @for, decimal caseCost, decimal packs, decimal units,
-        int deposit, decimal sold, decimal onHand, decimal min, decimal max, int levy = 0, bool inactive = false)
+        int deposit, decimal sold, decimal onHand, decimal min, decimal max, int levy = 0, bool inactive = false, int mixMatch = 0)
     {
         var unitCost = Math.Round(caseCost / (packs * units), 4);
         return new Item
@@ -251,6 +439,14 @@ public sealed class MockItemRepository : IItemRepository
             GmPct = Pricing.PricingCalculator.GrossMarginPct(price / @for, unitCost),
             Inactive = inactive,
             LastUpdated = new DateTime(2026, 11, 1, 9, 0, 0),
+            MixMatchId = mixMatch,
+            Location = 1,
+            Bin = (int)(upc % 7) + 1,
+            ShelfCode = "SC" + (upc % 100000).ToString("00000", CultureInfo.InvariantCulture),
+            LastReceived = new DateTime(2026, 11, 10),
+            LastCaseCost = caseCost,
+            // Made-up weekly sales: a share of Sold, most recent week first.
+            WeekSales = [Math.Round(sold / 40m), Math.Round(sold / 45m), Math.Round(sold / 50m), Math.Round(sold / 55m)],
         };
     }
 }

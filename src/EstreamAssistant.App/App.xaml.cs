@@ -74,7 +74,23 @@ public partial class App : Application
             };
         _log.Info($"Dry runs: {executor.Name}.");
         var interrupted = PendingChanges.FindInterruptedSave(paths.RunsFolder);
-        var pending = new PendingChanges(lookup, executor, _log, paths.RunsFolder);
+        lookup.LogError = (what, ex) => _log.Error(what, ex);
+        var labels = new EstreamAssistant.Core.Labels.LabelQueue(paths.Root, _log);
+        var mockDone = Path.Combine(paths.Root, "mock-engine", "Done");
+        bool real = settings.Executor == ExecutorKind.PowerShell;
+        // Phase C: price batch engine for bulk price / For / case cost changes (Import- and Apply-EsPriceBatch.ps1).
+        IPriceBatchExecutor priceBatches = real
+            ? new PowerShellPriceBatchExecutor(settings.EngineFolder, paths.RunsFolder, _log)
+            : new MockPriceBatchExecutor(repo, mockDone) { Delay = TimeSpan.FromSeconds(3) };
+        var pending = new PendingChanges(lookup, executor, _log, paths.RunsFolder)
+        {
+            Labels = labels,
+            PriceBatches = priceBatches,
+            ProtectedBatches = () => settings.ProtectedBatches,
+        };
+        _log.Info(priceBatches.IsAvailable
+            ? $"Price batches: {priceBatches.Name}, for {pending.PriceBatchMinItems}+ price/cost-only rows (automatic)."
+            : "Price batches: off (Import-/Apply-EsPriceBatch.ps1 not in the engine folder); every change uses the item editor.");
         var history = new HistoryService(
             executor.ResultsFolder is { } rf ? [rf] : [],
             paths.RunsFolder,
@@ -90,7 +106,12 @@ public partial class App : Application
             : Directory.CreateDirectory(Path.Combine(paths.Root, "mock-engine", "Receipts")).FullName;
         var receiptFolder = new ReceiptFolder(receiptInbox, _log);
         var reports = new ReportService(lookup, () => settings.ProtectedSheets, () => counts.Sheets, _log);
-        var tools = new ToolExecutor(lookup, settings, pending, counts, receipt, reports);
+        // Phase C 3.4: queue the shelf label list in eStream (Add-EsLabelBatch.ps1).
+        Core.Labels.ILabelExecutor labelExecutor = real
+            ? new Core.Labels.PowerShellLabelExecutor(settings.EngineFolder, paths.RunsFolder, _log)
+            : new Core.Labels.MockLabelExecutor(repo) { Delay = TimeSpan.FromSeconds(2) };
+        var eStreamLabels = new Core.Labels.EStreamLabels(labels, labelExecutor, () => settings.LabelDesign, _log);
+        var tools = new ToolExecutor(lookup, settings, pending, counts, receipt, reports, labels, eStreamLabels);
         IChatService chat = e.Args.Contains("--demo-chat")
             ? new DemoChatService(tools)
             : new ClaudeChatService(secrets.GetApiKey, settings, tools, usage, _log);
@@ -99,13 +120,17 @@ public partial class App : Application
         {
             History = new HistoryViewModel(history),
             Counts = new CountsViewModel(counts, lookup, _log),
-            Reports = new ReportsViewModel(reports, _log),
+            Reports = new ReportsViewModel(reports, _log, labels, eStreamLabels),
         };
-        mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder);
+        mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder, counts);
         _log.Info(receiptFolder.Start() ? $"Watching {receiptFolder.Inbox} for receipts." : $"No receipts folder at {receiptFolder.Inbox}; not watching.");
         counts.WorkStarted += (_, what) => mainVm.ShowWorking(what, !counts.IsMock);
         counts.WorkFinished += (_, _) => mainVm.HideWorking();
         counts.EngineBlocker = () => !counts.IsMock && mainVm.EStreamStatus == StatusLevel.Bad
+            ? "eStream Office isn't open. Open it, then try again." : null;
+        eStreamLabels.WorkStarted += (_, what) => mainVm.ShowWorking(what, !eStreamLabels.IsMock);
+        eStreamLabels.WorkFinished += (_, _) => mainVm.HideWorking();
+        eStreamLabels.EngineBlocker = () => !eStreamLabels.IsMock && mainVm.EStreamStatus == StatusLevel.Bad
             ? "eStream Office isn't open. Open it, then try again." : null;
 
         var window = new MainWindow(mainVm, settings);
@@ -119,11 +144,14 @@ public partial class App : Application
             _log.Warn($"Found a save that didn't finish (started {interrupted.Started}): {interrupted.JournalFile}");
             mainVm.ReportInterruptedSave(interrupted);
         }
-        // Writes the real stock sheet columns to the log if they differ from what the sheet queries expect.
+        // Writes the real columns to the log for any feature whose tables differ from what its queries expect.
         _ = Task.Run(async () =>
         {
-            try { await repo.CheckStockSheetTablesAsync(); }
-            catch (Exception ex) { _log.Warn("Couldn't check the stock sheet tables: " + ex.Message); }
+            foreach (var f in Enum.GetValues<DbFeature>())
+            {
+                try { await repo.CheckTablesAsync(f); }
+                catch (Exception ex) { _log.Warn($"Couldn't check the {f} tables: " + ex.Message); }
+            }
         });
         if (e.Args.Length > 0) await RunDemoAsync(e.Args, mainVm, window, pending);
     }

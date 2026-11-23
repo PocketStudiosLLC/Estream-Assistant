@@ -37,11 +37,47 @@ public interface IItemRepository
     /// </summary>
     Task<string?> CheckStockSheetTablesAsync(CancellationToken ct = default);
 
+    /// <summary>Like <see cref="CheckStockSheetTablesAsync"/> for any group of read-only queries.</summary>
+    Task<string?> CheckTablesAsync(DbFeature feature, CancellationToken ct = default);
+
+    /// <summary>
+    /// The item's Mix Match group, specials that haven't ended and price batches not yet applied.
+    /// Never throws for a missing table: <see cref="ItemContext.Problem"/> says what couldn't be read.
+    /// </summary>
+    Task<ItemContext> GetItemContextAsync(Item item, CancellationToken ct = default);
+    // --- store reports (Phase B; all read-only) --------------------------------------
+    Task<IReadOnlyList<VendorInfo>> GetVendorsAsync(CancellationToken ct = default);
+    /// <summary>Items the vendor supplies, with units sold since <paramref name="salesFrom"/>.</summary>
+    Task<IReadOnlyList<OrderLine>> GetOrderLinesAsync(int vendorId, DateTime salesFrom, CancellationToken ct = default);
+    /// <summary>Numbers for every active item (store-wide reports).</summary>
+    Task<IReadOnlyList<ItemFacts>> GetItemFactsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<CategoryInfo>> GetCategoriesAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<MixMatchInfo>> GetMixMatchGroupsAsync(CancellationToken ct = default);
+    /// <summary>Special events that haven't ended (or ended in the last 7 days).</summary>
+    Task<IReadOnlyList<SpecialEventInfo>> GetSpecialEventsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<PriceBatchInfo>> GetPendingBatchesAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<DailySales>> GetDailySalesAsync(long upc, DateTime from, CancellationToken ct = default);
+
     /// <summary>Quick connectivity check for the status light.</summary>
     Task<bool> PingAsync(CancellationToken ct = default);
 }
 
+/// <summary>Groups of read-only queries whose tables are checked against the real database first.</summary>
+public enum DbFeature
+{
+    StockSheets,
+    /// <summary>Mix Match groups, Special Events and Price Batches for one item.</summary>
+    ItemContext,
+    /// <summary>Vendors, vendor items and sales for suggested orders.</summary>
+    Ordering,
+    /// <summary>Store-wide item numbers, categories, mix match / specials / batch lists.</summary>
+    StoreReports,
+    /// <summary>ItemSales (daily sales history).</summary>
+    Sales,
+}
+
 /// <summary>The stock sheet tables don't match the queries yet (see the app log for the real columns).</summary>
-public sealed class StockSheetSetupException() : Exception(
+/// <remarks>Also used for the other <see cref="DbFeature"/>s, with their own message.</remarks>
+public sealed class StockSheetSetupException(string? message = null) : Exception(message ??
     "Reading stock sheets needs a one-time setup for this eStream version: the sheet tables are laid out differently. " +
     "The real table layout was written to the app log. Until then, open stock sheets in eStream (Inventory > Stock Sheets).");

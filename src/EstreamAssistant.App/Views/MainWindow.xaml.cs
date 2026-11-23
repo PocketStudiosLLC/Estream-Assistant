@@ -64,13 +64,17 @@ public partial class MainWindow : Window
                 return dlg.ShowDialog(this) == true ? dlg.FileName : null;
             };
             reports.PrintReport = r => ReportPrinter.Print(this, r);
+            reports.Confirm = text => MessageBox.Show(this, text, "eStream Assistant", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
+            reports.ConfirmAction = (title, intro, lines, ok, mustType) => ConfirmActionWindow.Ask(this, title, intro, lines, ok, mustType);
             ReportGrid.AutoGeneratingColumn += OnReportColumn;
             ReportGrid.MouseDoubleClick += async (_, e) =>
             {
                 // Double-click a sheet in the sheet list: show that sheet's items.
-                if (!reports.IsSheetList || ReportGrid.SelectedItem is not System.Data.DataRowView row) return;
+                if (!(reports.IsSheetList || reports.IsVendorList) || ReportGrid.SelectedItem is not System.Data.DataRowView row) return;
                 if (e.OriginalSource is DependencyObject d && ItemsControl.ContainerFromElement(ReportGrid, d) is null) return;
-                if (row["c0"] is long id) await reports.OpenSheetAsync((int)id);
+                if (row["c0"] is not long id) return;
+                if (reports.IsVendorList) await reports.OpenVendorOrderAsync((int)id);
+                else await reports.OpenSheetAsync((int)id);
             };
         }
         // Receipts (spec F5.1): drag/drop anywhere on the window, Ctrl+V, and the 📎 button.
@@ -199,6 +203,7 @@ public partial class MainWindow : Window
     {
         if (_vm.IsWorking) { e.Handled = true; _scanner.Reset(); return; }
         if (e.Key == Key.Escape && _vm.IsChatBusy) { _vm.StopChatCommand.Execute(null); e.Handled = true; return; }
+        if (e.Key == Key.F1) { ShowHelp(); e.Handled = true; return; }
         if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control && Tabs.SelectedIndex == 0
             && Keyboard.FocusedElement is not PasswordBox && TryPasteReceipt())
         {
@@ -286,6 +291,23 @@ public partial class MainWindow : Window
     {
         if (e.Action == NotifyCollectionChangedAction.Add)
             Dispatcher.BeginInvoke(DispatcherPriority.Background, FeedScroll.ScrollToEnd);
+    }
+
+    private void Help_Click(object sender, RoutedEventArgs e) => ShowHelp();
+
+    /// <summary>The "?" guide. Clicking an example puts it in the chat box on the Assistant tab (not sent).</summary>
+    private void ShowHelp()
+    {
+        new HelpWindow(text =>
+        {
+            Tabs.SelectedIndex = 0;
+            _vm.ChatText = text;
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                ChatBox.Focus();
+                ChatBox.CaretIndex = ChatBox.Text.Length;
+            });
+        }) { Owner = this }.ShowDialog();
     }
 
     private void SaveApiKey_Click(object sender, RoutedEventArgs e)

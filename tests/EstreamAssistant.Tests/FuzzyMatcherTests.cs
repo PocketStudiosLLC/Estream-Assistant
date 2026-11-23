@@ -94,4 +94,39 @@ public class FuzzyMatcherTests
     [InlineData("same", "same", 0)]
     public void Levenshtein(string a, string b, int expected) =>
         Assert.Equal(expected, FuzzyMatcher.Levenshtein(a, b));
+
+    [Theory]
+    [InlineData("lays")]
+    [InlineData("LAYS")]
+    [InlineData("Lay's")]
+    [InlineData("lay s")]
+    public void Keyword_lists_every_lays_item_whatever_the_spelling(string query)
+    {
+        var names = SampleMatcher().FindKeyword(query).Select(i => i.Description).Order(StringComparer.Ordinal).ToList();
+        string[] expected = ["CUCMBER LAYS", "LAY S BBQ 40G", "LAY'S CUCUMBER 40G", "LAYS ALL DRESS 220 g", "LAYS CLASSIC 235G",
+            "lays salt & vinegar 235g", "LAYSKETTLE JALAPENO"];
+        Assert.Equal(expected.Order(StringComparer.Ordinal), names);
+    }
+
+    [Fact]
+    public void Keyword_needs_every_word_and_skips_near_words()
+    {
+        var m = new FuzzyMatcher([
+            new ItemName(1, "LAYS CLASSIC 40G", 0, false),
+            new ItemName(2, "LAYS CLASSIC 235G", 0, false),
+            new ItemName(3, "DAYS INN CANDLE", 0, false),
+            new ItemName(4, "PLAYSET BALL", 0, false),
+            new ItemName(5, "LAYS OLD", 0, true),
+        ]);
+        Assert.Equal([1, 2], m.FindKeyword("lays").Select(i => i.Upc).Order());
+        Assert.Equal([1], m.FindKeyword("lays 40g").Select(i => i.Upc));
+        Assert.Equal([1, 2, 5], m.FindKeyword("lays", includeInactive: true).Select(i => i.Upc).Order());
+    }
+
+    [Fact]
+    public void Keyword_has_no_top_limit()
+    {
+        var m = new FuzzyMatcher(Enumerable.Range(1, 30).Select(n => new ItemName(n, $"LAYS FLAVOUR {n}", n, false)));
+        Assert.Equal(30, m.FindKeyword("lays").Count);
+    }
 }

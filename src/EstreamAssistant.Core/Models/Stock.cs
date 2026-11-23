@@ -52,5 +52,17 @@ public sealed record StockSheetLine
     /// <summary>Total units counted (Adjustments.ActualUnits).</summary>
     public decimal Counted { get; init; }
     public decimal UnitCost { get; init; }
-    public decimal OverShort => Counted - System;
+    /// <summary>Adjustments.Adjustment: what posting the sheet added to (or took from) on-hand.</summary>
+    public decimal Adjustment { get; init; }
+    /// <summary>The sheet is closed in eStream.</summary>
+    public bool SheetClosed { get; init; }
+
+    /// <summary>
+    /// Counted − system. Posting a sheet sets its system figures equal to the counts (manual: "Stock Sheets -
+    /// Updating Stock"), so on a closed sheet where they're equal the posted Adjustment is the real over/short.
+    /// </summary>
+    public decimal OverShort => SheetClosed && Counted == System ? Adjustment : Counted - System;
+
+    /// <summary>True when this line's over/short comes from the posted adjustment.</summary>
+    public bool FromPosting => SheetClosed && Counted == System && Adjustment != 0;
 }

@@ -17,7 +17,7 @@ public sealed class CountsTests : IDisposable
         var lookup = new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n.json")));
         var counts = new StockCounts(lookup, new MockStockSheetExecutor(repo) { Delay = TimeSpan.Zero }, () => protectedSheets ?? [], _dir.Path)
         {
-            ConfirmCreate = (_, _) => Task.FromResult(confirm),
+            ConfirmCreate = (_, _, _) => Task.FromResult(confirm),
         };
         return (counts, repo, lookup);
     }
@@ -110,7 +110,7 @@ public sealed class CountsTests : IDisposable
         var exec = new NoNumberExecutor();
         var repo = new MockItemRepository { Delay = TimeSpan.Zero };
         var lookup = new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n.json")));
-        var c = new StockCounts(lookup, exec, () => [10001], _dir.Path) { ConfirmCreate = (_, _) => Task.FromResult(true) };
+        var c = new StockCounts(lookup, exec, () => [10001], _dir.Path) { ConfirmCreate = (_, _, _) => Task.FromResult(true) };
         await c.AddAsync([new CountInput("4011", 5)], true);
         var run = await c.CreateSheetAsync(null, "");
         Assert.False(run.Ok);

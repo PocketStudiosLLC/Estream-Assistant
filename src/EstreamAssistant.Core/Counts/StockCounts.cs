@@ -8,8 +8,13 @@ using EstreamAssistant.Core.Logging;
 
 namespace EstreamAssistant.Core.Counts;
 
-/// <summary>One counted item. Over/short = counted − system on-hand.</summary>
-public sealed record CountRow(long Upc, string Description, decimal Count, decimal SystemOnHand, decimal UnitCost)
+/// <summary>
+/// One counted item. Over/short = counted − system on-hand. <paramref name="CountedAt"/> and <paramref name="SoldAtCount"/>
+/// (eStream's Sold figure when it was counted) show whether it sold between counting and making the sheet.
+/// <paramref name="Note"/> explains a count the app worked out (a receipt: "on hand 4 + received 24 = 28").
+/// </summary>
+public sealed record CountRow(long Upc, string Description, decimal Count, decimal SystemOnHand, decimal UnitCost,
+    DateTime? CountedAt = null, decimal? SoldAtCount = null, string? Note = null)
 {
     public decimal OverShort => Count - SystemOnHand;
     /// <summary>Value of the over/short at unit cost (an estimate).</summary>
@@ -130,8 +135,49 @@ public sealed class StockCounts
     /// <summary>Set by the app: returns why the engine can't run now (e.g. eStream not open), or null.</summary>
     public Func<string?> EngineBlocker { get; set; } = () => null;
 
-    /// <summary>Set by the app: the in-app confirmation for creating a sheet (also used when Claude asks).</summary>
-    public Func<IReadOnlyList<CountRow>, string, Task<bool>> ConfirmCreate { get; set; } = (_, _) => Task.FromResult(false);
+    /// <summary>
+    /// Set by the app: the in-app confirmation for creating a sheet (also used when Claude asks).
+    /// The third argument is the timing warnings from <see cref="TimingCheckAsync"/> (may be empty).
+    /// </summary>
+    public Func<IReadOnlyList<CountRow>, string, IReadOnlyList<string>, Task<bool>> ConfirmCreate { get; set; } = (_, _, _) => Task.FromResult(false);
+
+    /// <summary>A count older than this gets a warning before the sheet is made.</summary>
+    public static readonly TimeSpan OldCount = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// eStream records system stock when the sheet is MADE (manual: Stock Sheets - Creating). Items that sold after
+    /// they were counted will show a wrong over/short. Re-reads Sold for each row and returns plain warnings.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> TimingCheckAsync(IReadOnlyList<CountRow> rows, CancellationToken ct = default)
+    {
+        var sold = new List<(CountRow Row, decimal Since)>();
+        foreach (var r in rows)
+        {
+            if (r.SoldAtCount is not decimal then) continue;
+            var item = await _lookup.Repository.GetByBarcodeAsync(r.Upc, ct).ConfigureAwait(false);
+            if (item is not null && item.Sold > then) sold.Add((r, item.Sold - then));
+        }
+        var w = new List<string>();
+        if (sold.Count > 0)
+        {
+            var names = string.Join(", ", sold.OrderByDescending(x => x.Since).Take(6).Select(x => $"{x.Row.Description} ({N(x.Since)} sold)"));
+            w.Add($"{sold.Count} item{(sold.Count == 1 ? "" : "s")} sold since {(sold.Count == 1 ? "it was" : "they were")} counted: {names}" +
+                  $"{(sold.Count > 6 ? $" and {sold.Count - 6} more" : "")}. eStream takes system stock when the sheet is made, so these will show as short " +
+                  "by what sold. Recount them, or lower their counts by what sold, before making the sheet.");
+        }
+        var old = rows.Where(r => r.CountedAt is { } t && DateTime.Now - t > OldCount).ToList();
+        if (old.Count > 0)
+            w.Add($"{old.Count} count{(old.Count == 1 ? " is" : "s are")} more than a day old (oldest {old.Min(r => r.CountedAt):MMM d, h:mm tt}). " +
+                  "Sales and deliveries since then can make the over/short wrong.");
+        return w;
+    }
+
+    /// <summary>The manual's checklist for accurate counts (shown when making a sheet).</summary>
+    public static IReadOnlyList<string> CountChecklist { get; } =
+    [
+        "Received invoices, transfers and credit notes are finished in eStream.",
+        "The registers' sales are in (after end-of-day polling), and nothing was sold from the counted area since counting.",
+    ];
 
     public bool IsMock => _executor.IsMock;
     public bool IsRunning { get; private set; }
@@ -160,8 +206,12 @@ public sealed class StockCounts
             {
                 var i = _rows.FindIndex(r => r.Upc == item.Upc);
                 if (i < 0 && _rows.Count >= MaxRows) { outcomes.Add(new(input.Upc, false, item.Description, "The count list is full.", null)); continue; }
-                var count = i >= 0 && addToExisting ? _rows[i].Count + input.Count : input.Count;
-                row = new CountRow(item.Upc, item.Description, count, item.OnHand, item.UnitCost);
+                bool adding = i >= 0 && addToExisting;
+                var count = adding ? _rows[i].Count + input.Count : input.Count;
+                // Adding to an earlier count keeps the earliest time: that's when the snapshot started to age.
+                row = new CountRow(item.Upc, item.Description, count, item.OnHand, item.UnitCost,
+                    adding ? _rows[i].CountedAt ?? DateTime.Now : DateTime.Now,
+                    adding ? _rows[i].SoldAtCount ?? item.Sold : item.Sold);
                 if (i >= 0) _rows[i] = row; else _rows.Add(row);
             }
             outcomes.Add(new(input.Upc, true, item.Description, $"Counted {N(row.Count)} (system {N(row.SystemOnHand)}, {Signed(row.OverShort)})", row));
@@ -243,7 +293,9 @@ public sealed class StockCounts
     /// Stage 1: creates a stock sheet with these counts after the owner confirms. Uses the count list
     /// when <paramref name="rows"/> is null (the button), or Claude's rows (create_stock_sheet).
     /// </summary>
-    public async Task<SheetRun> CreateSheetAsync(IReadOnlyList<CountRow>? rows, string comment, CancellationToken ct = default)
+    /// <param name="notes">Shown first in the confirmation (e.g. receipt lines that were left out).</param>
+    public async Task<SheetRun> CreateSheetAsync(IReadOnlyList<CountRow>? rows, string comment, CancellationToken ct = default,
+        IReadOnlyList<string>? notes = null)
     {
         rows ??= Rows;
         comment = (comment ?? "").Trim();
@@ -257,7 +309,9 @@ public sealed class StockCounts
             return new(false, $"These exact counts were already imported into sheet {dup.SheetId?.ToString() ?? "(number unknown)"} on {dup.Created:MMM d}. " +
                               "Imports add up in eStream, so the app won't import them again.", "");
 
-        if (!await ConfirmCreate(rows, comment).ConfigureAwait(false))
+        var timing = await TimingCheckAsync(rows, ct).ConfigureAwait(false);
+        foreach (var t in timing) _log?.Warn("Before making a stock sheet: " + t);
+        if (!await ConfirmCreate(rows, comment, [.. notes ?? [], .. timing]).ConfigureAwait(false))
             return new(false, "Cancelled. No stock sheet was made.", "");
 
         var run = await RunEngineAsync("Making the stock sheet", () => _executor.CreateSheetAsync(csv, comment, ct)).ConfigureAwait(false);
@@ -281,6 +335,13 @@ public sealed class StockCounts
         return run.SheetId is null
             ? run with { Ok = false, Message = "The sheet was made, but its number wasn't in the script output. Look it up in eStream, then use \"Enter number\" on the sheet." }
             : run;
+    }
+
+    /// <summary>True when a sheet with exactly these counts was made (even if its number isn't known).</summary>
+    public bool HasSheetFor(IReadOnlyList<CountRow> rows)
+    {
+        var hash = CountsCsv.Hash(CountsCsv.Write(rows));
+        lock (_gate) return _sheets.Any(s => s.CountsHash == hash);
     }
 
     /// <summary>For a sheet whose number the script didn't report: the owner types it from eStream.</summary>

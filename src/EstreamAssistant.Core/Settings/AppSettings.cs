@@ -38,10 +38,17 @@ public sealed class AppSettings
     public ExecutorKind Executor { get; set; } = ExecutorKind.Mock;
     public int ScriptTimeoutBaseSeconds { get; set; } = 60;
     public int ScriptTimeoutPerItemSeconds { get; set; } = 30;
+    /// <summary>
+    /// How long the registers take to get back-office changes (eStream Server's polling interval; the manual says
+    /// about 10 minutes). Only used in messages.
+    /// </summary>
+    public int RegisterUpdateMinutes { get; set; } = 10;
     /// <summary>S6: the owner's own open stock sheets the app must never touch. Local only (never in the repo).</summary>
     public List<int> ProtectedSheets { get; set; } = [];
     /// <summary>S6: pending price batches that aren't ours. Local only.</summary>
     public List<int> ProtectedBatches { get; set; } = [];
+    /// <summary>The eStream label design that "Queue in eStream" adds shelf labels to (name or LabelBatchID).</summary>
+    public string LabelDesign { get; set; } = "GROCERY SHELVES";
 
     // Claude
     /// <summary>Model for ordinary text messages (lookups, questions, pricing). The cheaper one.</summary>

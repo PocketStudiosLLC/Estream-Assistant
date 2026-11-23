@@ -1,0 +1,130 @@
+eStream Assistant - Test 2: checks after installing v0.1.6
+============================================================
+Give this whole file to Claude Code on the store's back-office PC. Start Claude Code in C:\eStreamAutomation
+with eStream Office open and logged in. This follows the Phase C hand-off (PhaseC-report.txt, eStream-map.md).
+
+Who you are working with: the store owner. They know eStream well but aren't technical. Plain words, one step
+at a time, say exactly what to click.
+
+Why this test: Phase C proved every script works. A few things the app now relies on were not measured:
+how long a price batch apply takes, a batch line with only ONE change, and the receipt -> stock sheet flow
+end to end. Everything here is done AFTER v0.1.6 is installed (step 0). Part A checks the scripts on their
+own, with the app closed. Part B does the same things from the app.
+
+
+0. INSTALL FIRST
+----------------
+- Install eStreamAssistant-Setup-0.1.6.exe (no admin rights; "Windows protected your PC" -> More info -> Run
+  anyway). Updating keeps the settings and the saved API key.
+- Start the app once: the window title shows 0.1.6 (the log also starts with "Starting eStream Assistant 0.1.6"), Settings still has Data source = Sql and Dry runs with =
+  PowerShell, Engine folder = C:\eStreamAutomation. Nothing else needs changing: price batches turn on by
+  themselves for 2+ items, and SAVE runs its own check (dry run) before asking.
+- In the app log (%LOCALAPPDATA%\eStreamAssistant\logs, newest file) find the line "Price batches: PowerShell
+  price batch, for 2+ price/cost-only rows (automatic)". If it says "off", the batch scripts aren't in the
+  engine folder: fix that first (A1).
+- Then CLOSE the app for Part A, so it never runs a script at the same time as you.
+
+
+SAFETY RULES (same as Phase C, they never change)
+- SQL is READ-ONLY: SELECT only (sqlcmd -K ReadOnly or Get-EsItem.ps1).
+- Only touch the TEST records: item A 2999990000011, item B 2999990000028 (vendor 164, category 20510).
+  Never NUTRL 627843437147 or any real item.
+- Never touch the owner's stock sheets 10749, 10750, 10754 or price batches 10208, 10209, 10210.
+- Never clear or print the label queue (the owner has ~220 real labels queued).
+- Applying a price batch and posting a stock sheet have NO UNDO. Ask the owner before each one:
+  "This will <what> on the TEST item. OK?" and wait for a yes.
+- Write down the test items' values first and put them back at the end:
+  A: price 99.00 for 1, case cost 12.00, on hand 0.   B: price 98.50 for 2, case cost 12.00, on hand 0.
+  (Check with Get-EsItem.ps1 - if they differ, write down what you find instead.)
+
+
+PART A - scripts only (app installed but closed)
+------------------------------------------------
+A1. Scripts in place
+    - Check C:\eStreamAutomation has eStreamUI.psm1, Import-EsPriceBatch.ps1, Apply-EsPriceBatch.ps1,
+      New-EsStockSheet.ps1, Publish-EsStockSheet.ps1, Add-EsLabelBatch.ps1, Invoke-EsCsv.ps1, Set-EsItem.ps1,
+      Get-EsItem.ps1, and that they are the Phase C versions (same dates/sizes as the hand-off copies).
+
+A2. Old files in the Inbox
+    - List C:\eStreamAutomation\Inbox\assistant_*.csv. Older app versions left their SAVE files there, and a
+      plain Invoke-EsCsv.ps1 run (no -Path) would apply them AGAIN.
+    - Show the owner the list. With their OK, move them to C:\eStreamAutomation\Done\old-inbox\ (don't delete).
+    - Also check what Power Automate's "Estream" flow runs: if it runs Invoke-EsCsv.ps1 without -Path on a
+      timer, tell the owner and note it in the report.
+
+A3. Price batch lines with ONE change (dry runs only, nothing saved)
+    The app sends lines like these. Make three small CSVs (header UPC,Price,For,CaseCost) and run each with
+    Import-EsPriceBatch.ps1 -Path <file> -Comment "test2" -DryRun:
+      a) case cost only:   2999990000011,,,12.50
+      b) price only:       2999990000011,99.50,,
+      c) For only:         2999990000028,,3,
+    For each: the RESULT line, the status (expect DryRunOK), and in the log line "batch: price .. for ..,
+    case cost .." check the fields that were left blank kept their CURRENT values (not 0, not blank).
+    Confirm the dry-run batch was deleted (no new pending batch in Price Batch Maintenance).
+    Also run one line with a 60% case cost change WITHOUT Force (expect it refused, "over 50%") and the same
+    with ,Y in a Force column (expect DryRunOK).
+
+A4. Timing: one real batch with 2 lines (owner's OK first - no undo)
+    - CSV: 2999990000011,99.50,,12.50  and  2999990000028,98.00,,12.50
+    - Run Import-EsPriceBatch.ps1 (real, no -DryRun), then Apply-EsPriceBatch.ps1 -BatchId <id>.
+    - Write down the time each one took (start and end time from the log). Phase C's apply took ~5 minutes
+      for 1-2 lines: say where the time went (eStream busy after clicking Apply? the read-back?), and whether
+      it looks fixed per batch or grows per line. The app waits at most 10 minutes + 10 seconds per item.
+    - Check Inventory and Products show the new prices and costs.
+    - Then put the values back with a second batch (import + apply), and time that one too.
+
+A5. Timing: the item editor for one item
+    - Invoke-EsCsv.ps1 -Path <file> with one row for item A changing Min (2 -> 3), real save (owner's OK),
+      then back to 2. Write down how long one item takes. The app sends a single price change this way and
+      2+ price changes through a batch; these numbers tell us if that split is right.
+
+A6. Receipt -> stock sheet, by hand (owner's OK before posting)
+    - Item A on hand now (Get-EsItem.ps1). Make counts.csv: UPC,Count with 2999990000011,<on hand + 5>.
+    - New-EsStockSheet.ps1 -Path counts.csv -Comment "Receipt TEST2". Write down the RESULT line and sheet number.
+    - Check the sheet: system = on hand, counted = on hand + 5, over/short +5.
+    - With the owner's OK: Publish-EsStockSheet.ps1 -SheetId <n> -DryRun, then the real post.
+    - Check on hand went up by exactly 5. Write down the whole output of Publish (it has no RESULT line;
+      say what it prints when it works and when it fails, and its exit codes).
+    - Put item A back to its old on hand with a second sheet the same way (count = old value).
+
+A7. Labels
+    - Add-EsLabelBatch.ps1 -Path upcs.csv -Design "GROCERY SHELVES" with items A and B (Count 1), dry run, then
+      real (owner's OK). Expect Applied for both. Check the owner's other queued labels are untouched
+      (count before and after).
+    - Ask the owner to look at the two TEST labels in Labels Print (preview, don't print) - item B is "2 for":
+      does the label show the price now? Then ask the owner to remove the two TEST labels from the queue the
+      way they normally would, and write down how (the app never removes them itself).
+
+
+PART B - with the updated app (eStream Assistant, Data source = Sql, Dry runs with = PowerShell)
+-------------------------------------------------------------------------------------------------
+Open the app again (installed in step 0). Use only items A and B. Check items A and B have the values you
+wrote down (Part A put them back).
+
+B1. One-step SAVE, item editor: on item A's card press Change..., set Min 3, Add. Press SAVE (no dry run).
+    Expect: the "don't touch" overlay (the check), then the confirmation window, then Applied. Put Min back to 2.
+B2. One-step SAVE, price batch: in the chat ask Claude: "change the price of 2999990000011 to 99.50 and
+    2999990000028 to 98.00". Claude should stage them and say to press SAVE (not suggest a separate dry run).
+    Press SAVE. Expect: the rows say "Price batch dry run OK", the confirmation window says they go into one
+    price batch, then Applied, and the app log shows the batch number. Write down how long the save took.
+    Check Price Batch Maintenance: the batch is applied, no extra pending batch is left. Put the prices back.
+B3. A price that isn't 0 or 5 cents (e.g. 99.49 on A) with B at 98.00: A must go through the item editor,
+    B alone too (only one batch-able row). Cancel at the confirmation window - nothing saved.
+B4. A failed check: stage a 60% price change on A. SAVE should stop after the check with the row marked,
+    and save nothing.
+B5. Receipt -> stock sheet: make a fake receipt photo (paper: "ZZ TEST ITEM A, 2999990000011, qty 1 case,
+    case price 12.50"), drag it into the app, press Send. In the receipt table check received units = 1 x 12
+    (item A is 1 x 12). Press "Add stock (stock sheet)...": the window must say "on hand X + received 12 =
+    count Z". Make the sheet. The line then says "on stock sheet N"; pressing it again must not make another.
+    Post it from the Stock counts tab (owner's OK), check on hand +12, then put it back as in A6.
+    Also try asking Claude "add the stock from this receipt" - it must ask first (receipt_stock_sheet).
+B6. Labels: after B2, Reports > Shelf labels to print lists A and B. Press "Queue in eStream...", confirm.
+    Both leave the app's list and show in Labels Print. Ask the owner to remove them as in A7.
+
+
+WHAT TO SEND BACK
+-----------------
+Write C:\eStreamAutomation\Done\test2-report.txt with, for each step: what you ran, the RESULT lines, pass or
+fail, the times from A4/A5/B2, anything that behaved differently from this file, and the final values of
+items A and B (they must match the values you wrote down at the start). Copy that file, the app's log for the
+test day (%LOCALAPPDATA%\eStreamAssistant\logs) and any results CSVs into a folder for the developer.

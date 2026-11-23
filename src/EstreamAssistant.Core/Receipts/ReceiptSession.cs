@@ -36,6 +36,9 @@ public sealed record PriceRule(PricingMode Mode, decimal Pct, bool ApplyEndings)
     public string Text => $"{Pct.ToString("0.##", CultureInfo.InvariantCulture)}% {(Mode == PricingMode.Markup ? "markup" : "margin")}";
 }
 
+/// <summary>Counts for a receipt's stock sheet (Count = on hand + received), the lines they came from, and the lines left out.</summary>
+public sealed record ReceivedCounts(IReadOnlyList<Counts.CountRow> Rows, IReadOnlyList<int> Lines, IReadOnlyList<string> Problems);
+
 public enum ReceiptLineStatus
 {
     /// <summary>Matched to an item, cost worked out.</summary>
@@ -74,6 +77,12 @@ public sealed record ReceiptLine
     public PriceRule? Rule { get; init; }
     public decimal? ProposedPrice { get; init; }
     public decimal? ProposedGm { get; init; }
+    /// <summary>
+    /// Selling units received on this line: qty × packs × units for a line priced per case, qty for a line priced
+    /// per unit (or an item sold by the unit). Null when the qty or the case size is missing.
+    /// </summary>
+    public decimal? ReceivedUnits { get; init; }
+    public string ReceivedMath { get; init; } = "";
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
     public int Number => Input.Line;
@@ -93,6 +102,8 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
     private readonly object _gate = new();
     private readonly SortedDictionary<int, ReceiptLine> _lines = [];
     private readonly List<ReceiptFile> _files = [];
+    /// <summary>Receipt lines already imported into a stock sheet (line → sheet number). Imports add up in eStream.</summary>
+    private readonly Dictionary<int, int?> _onSheet = [];
 
     public event EventHandler? Changed;
 
@@ -117,6 +128,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             files = _files.ToList();
             _files.Clear();
             _lines.Clear();
+            _onSheet.Clear();
             Source = "";
         }
         Changed?.Invoke(this, EventArgs.Empty);
@@ -198,6 +210,90 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             }
         }
         return list;
+    }
+
+    public IReadOnlyDictionary<int, int?> LinesOnStockSheets { get { lock (_gate) return new Dictionary<int, int?>(_onSheet); } }
+
+    /// <summary>
+    /// Receipt → stock sheet (owner's decision, Phase C): the stock sheet line holds a COUNT, so
+    /// Count = on hand right now + received units. When on hand is below 0 it is treated as 0 (the negative is
+    /// written off): Count = received units. The sheet is posted "by over/short only", so sales made between
+    /// making and posting the sheet are kept. One UPC on several lines: the received units are added first,
+    /// on hand only once. Lines already on a stock sheet are left out (imports add up in eStream).
+    /// <paramref name="lineNumbers"/> empty = every line.
+    /// </summary>
+    public async Task<ReceivedCounts> ToReceivedCountsAsync(IReadOnlyCollection<int> lineNumbers, CancellationToken ct = default)
+    {
+        List<ReceiptLine> lines;
+        Dictionary<int, int?> onSheet;
+        lock (_gate)
+        {
+            lines = (lineNumbers.Count == 0 ? _lines.Values : lineNumbers.Where(_lines.ContainsKey).Select(n => _lines[n])).ToList();
+            onSheet = new(_onSheet);
+        }
+        var problems = lineNumbers.Where(n => lines.All(l => l.Number != n)).Order().Select(n => $"Line {n} isn't on the receipt.").ToList();
+        var take = new List<ReceiptLine>();
+        foreach (var l in lines)
+        {
+            var name = l.Item?.Description ?? l.Input.Text;
+            if (onSheet.TryGetValue(l.Number, out var sheet)) problems.Add($"Line {l.Number} ({name}) is already on stock sheet {sheet?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)"}.");
+            else if (l.Status == ReceiptLineStatus.Unreadable) problems.Add($"Line {l.Number} couldn't be read.");
+            else if (l.Item is null) problems.Add($"Line {l.Number} ({name}): no eStream item picked yet.");
+            else if (l.Item.Inactive) problems.Add($"Line {l.Number} ({name}) is inactive.");
+            else if (l.ReceivedUnits is not > 0) problems.Add($"Line {l.Number} ({name}): no quantity{(l.Input.Qty is > 0 ? " (eStream has no case size for it)" : "")}, so nothing to add.");
+            else take.Add(l);
+        }
+
+        var rows = new List<Counts.CountRow>();
+        var used = new List<int>();
+        foreach (var g in take.GroupBy(l => l.Item!.Upc))
+        {
+            var received = g.Sum(l => l.ReceivedUnits!.Value);
+            // Fresh on hand: it may have changed since the receipt was read.
+            var item = await lookup.Repository.GetByBarcodeAsync(g.Key, ct).ConfigureAwait(false) ?? g.First().Item!;
+            var start = Math.Max(0, item.OnHand);
+            var count = start + received;
+            if (count > 100_000) { problems.Add($"{item.Description}: count {N(count)} is too big. Check the quantity."); continue; }
+            var from = g.Count() == 1 ? $"received {N(received)}" : $"received {N(received)} (lines {string.Join(", ", g.Select(l => l.Number))})";
+            var note = item.OnHand < 0
+                ? $"on hand {N(item.OnHand)} treated as 0 + {from} = count {N(count)}"
+                : $"on hand {N(item.OnHand)} + {from} = count {N(count)}";
+            rows.Add(new Counts.CountRow(item.Upc, item.Description, count, item.OnHand, item.UnitCost, DateTime.Now, item.Sold, note));
+            used.AddRange(g.Select(l => l.Number));
+        }
+        return new(rows, used.Order().ToList(), problems);
+    }
+
+    /// <summary>
+    /// Receipt → stock sheet, stage 1 only (the Stock counts tab posts it, with its own check and typed number).
+    /// The owner confirms the counts first (StockCounts' confirmation window). Used by the receipt table's button
+    /// and by Claude (receipt_stock_sheet).
+    /// </summary>
+    public async Task<(Counts.SheetRun Run, ReceivedCounts Counts)> MakeStockSheetAsync(Counts.StockCounts counts,
+        IReadOnlyCollection<int> lineNumbers, CancellationToken ct = default)
+    {
+        var rc = await ToReceivedCountsAsync(lineNumbers, ct).ConfigureAwait(false);
+        if (rc.Rows.Count == 0)
+            return (new(false, "Nothing to add from this receipt. " + string.Join(" ", rc.Problems.Take(6)), ""), rc);
+        string source;
+        lock (_gate) source = Source;
+        var comment = ("Receipt " + source).Trim();
+        var notes = new List<string>
+        {
+            "Receipt: each count is on hand now + the units received (a negative on hand counts as 0). " +
+            "Posting adds only the difference, so sales made in between are kept. Post it on the Stock counts tab.",
+        };
+        notes.AddRange(rc.Problems.Select(p => "Left out: " + p));
+        var run = await counts.CreateSheetAsync(rc.Rows, comment, ct, notes).ConfigureAwait(false);
+        if (run.SheetId is not null || counts.HasSheetFor(rc.Rows)) MarkOnStockSheet(rc.Lines, run.SheetId);
+        return (run, rc);
+    }
+
+    /// <summary>After a stock sheet was made from these lines: they can't go on another sheet.</summary>
+    public void MarkOnStockSheet(IEnumerable<int> lineNumbers, int? sheetId)
+    {
+        lock (_gate) foreach (var n in lineNumbers) _onSheet[n] = sheetId;
+        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     private ReceiptLine ApplyRule(ReceiptLine line, PriceRule rule)
@@ -305,6 +401,14 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             if (item.Price > 0) gmNow = PricingCalculator.GrossMarginPct(item.Price / Math.Max(1, item.For), uc);
         }
 
+        decimal? receivedUnits = null;
+        string receivedMath = "";
+        if (input.Qty is { } qty && qty > 0)
+        {
+            if (input.UnitPrice is not null || units == 1) { receivedUnits = qty; receivedMath = $"{N(qty)} unit{(qty == 1 ? "" : "s")}"; }
+            else if (units > 1) { receivedUnits = qty * units; receivedMath = $"{N(qty)} × {N(units)} = {N(receivedUnits.Value)} units"; }
+        }
+
         var status = item.Inactive ? ReceiptLineStatus.Inactive
             : warnings.Count > 0 ? ReceiptLineStatus.Check
             : ReceiptLineStatus.Ready;
@@ -320,6 +424,8 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             NewCaseCost = caseCost,
             CostChangePct = changePct,
             GmAtCurrentPrice = gmNow,
+            ReceivedUnits = receivedUnits,
+            ReceivedMath = receivedMath,
             Warnings = warnings,
         };
     }

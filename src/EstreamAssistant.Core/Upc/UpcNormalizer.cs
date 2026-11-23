@@ -25,11 +25,14 @@ public sealed record UpcCandidate(long Upc, UpcCandidateKind Kind)
 /// UPC normalization and check-digit fallbacks (Plan.txt sec. 11).
 /// Inventory.BarCode is a float, so leading zeros are lost; ~2% of stored codes
 /// have no check digit. Lookup order: exact, without last digit, with check digit appended.
-/// TODO(store PC): compare edge cases against Get-EsItem.ps1, which is the reference.
+/// Matches Get-EsItem.ps1 (checked in Phase C): digits only, leading zeros dropped, and the last digit is only dropped
+/// for codes of 7 or more digits, so a short PLU like 4011 never also tries 401.
 /// </summary>
 public static class UpcNormalizer
 {
     public const int MaxDigits = 18; // decimal(18,0) in the reference query
+    /// <summary>Get-EsItem.ps1: "if ($d.Length -ge 7)" before trying the code without its last digit.</summary>
+    public const int MinDigitsToDropLast = 7;
 
     /// <summary>Strips non-digits and leading zeros. Returns "" when nothing is left.</summary>
     public static string Normalize(string? raw)
@@ -100,7 +103,7 @@ public static class UpcNormalizer
         }
 
         Add(digits, UpcCandidateKind.Exact);
-        if (digits.Length > 1) Add(digits[..^1], UpcCandidateKind.WithoutLastDigit);
+        if (digits.Length >= MinDigitsToDropLast) Add(digits[..^1], UpcCandidateKind.WithoutLastDigit);
         Add(digits + ComputeCheckDigit(digits), UpcCandidateKind.WithCheckDigitAppended);
         return result;
     }

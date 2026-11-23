@@ -14,7 +14,7 @@ public sealed record ValidationResult(IReadOnlyList<FieldChange> Fields, string?
 /// allowed with Force after the owner confirms), the deposit or levy code is unknown, the item
 /// is inactive, Min &gt; Max, For is not a whole number of at least 1, or nothing changes.
 /// The engine checks again itself; if they disagree, the engine's result counts.
-/// TODO(store PC): confirm against Invoke-EsCsv.ps1 that Force also covers the 50% price/cost rule.
+/// Checked against Invoke-EsCsv.ps1 (Phase C): Force=Y skips the 50% price/case cost rule and the 500-unit on-hand rule.
 /// </summary>
 public static class ChangeValidator
 {

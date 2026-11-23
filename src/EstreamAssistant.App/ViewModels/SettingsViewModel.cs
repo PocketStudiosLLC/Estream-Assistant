@@ -64,6 +64,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _scanListWindowSeconds = "";
     [ObservableProperty] private string _protectedSheets = "";
     [ObservableProperty] private string _protectedBatches = "";
+    [ObservableProperty] private string _labelDesign = "";
     [ObservableProperty] private string _scanMinDigits = "";
     [ObservableProperty] private string _scanMaxDigits = "";
     [ObservableProperty] private string _longChatTurns = "";
@@ -129,6 +130,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         ScanListWindowSeconds = s.ScanListWindowSeconds.ToString(CultureInfo.InvariantCulture);
         ProtectedSheets = string.Join(", ", s.ProtectedSheets);
         ProtectedBatches = string.Join(", ", s.ProtectedBatches);
+        LabelDesign = s.LabelDesign;
         ScanMinDigits = s.ScanMinDigits.ToString(CultureInfo.InvariantCulture);
         ScanMaxDigits = s.ScanMaxDigits.ToString(CultureInfo.InvariantCulture);
         LongChatTurns = s.LongChatTurns.ToString(CultureInfo.InvariantCulture);
@@ -163,6 +165,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         { StatusMessage = "Protected sheets must be sheet numbers separated by commas, e.g. 10001, 10002."; return; }
         if (!TryParseNumbers(ProtectedBatches, out var protectedBatches))
         { StatusMessage = "Protected price batches must be batch numbers separated by commas."; return; }
+        if (string.IsNullOrWhiteSpace(LabelDesign) || LabelDesign.Trim().Length > 60)
+        { StatusMessage = "Label design must be an eStream label design name or number, e.g. GROCERY SHELVES."; return; }
         if (!int.TryParse(ScanMinDigits, out var minDigits) || !int.TryParse(ScanMaxDigits, out var maxDigits)
             || minDigits < 4 || maxDigits > 20 || minDigits > maxDigits)
         { StatusMessage = "Barcode digits: min and max between 4 and 20, min not more than max (default 6 and 14)."; return; }
@@ -195,6 +199,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.ScanListWindowSeconds = window;
         _settings.ProtectedSheets = protectedSheets;
         _settings.ProtectedBatches = protectedBatches;
+        _settings.LabelDesign = LabelDesign.Trim();
         _settings.ScanMinDigits = minDigits;
         _settings.ScanMaxDigits = maxDigits;
         _settings.LongChatTurns = longChat;

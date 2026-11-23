@@ -14,7 +14,8 @@ public sealed record ItemMatch(ItemName Item, double Score)
 /// exact 1.0, prefix 0.85, contains 0.75, else 1 - Levenshtein/maxLen when the
 /// lengths are within 2. Scores are averaged over query words; keep >= 0.5;
 /// sort by score then Sold.
-/// TODO(store PC): copy the exact stop-word list from Get-EsItem.ps1.
+/// Stop words: every word Get-EsItem.ps1 ignores (the, and, of, a, for, to, chips, chip, bag, bottle, can, pop, drink),
+/// plus a few plurals and pack words this port also ignores.
 /// </summary>
 public sealed class FuzzyMatcher
 {
@@ -29,17 +30,17 @@ public sealed class FuzzyMatcher
     public static readonly IReadOnlySet<string> StopWords = new HashSet<string>(StringComparer.Ordinal)
     {
         "THE", "AND", "A", "OF", "FOR", "WITH", "TO",
-        "CHIPS", "CHIP", "BAG", "BAGS", "POP", "BOTTLE", "CAN", "CANS", "PACK", "PK",
+        "CHIPS", "CHIP", "BAG", "BAGS", "POP", "DRINK", "BOTTLE", "CAN", "CANS", "PACK", "PK",
     };
 
-    private readonly record struct Entry(ItemName Item, string Upper, string[] Words);
+    private readonly record struct Entry(ItemName Item, string Upper, string[] Words, string Compact, int[] WordStarts);
 
     private readonly Entry[] _entries;
 
     public FuzzyMatcher(IEnumerable<ItemName> items)
     {
         _entries = items
-            .Select(i => { var u = Clean(i.Description); return new Entry(i, u, SplitWords(u)); })
+            .Select(i => { var u = Clean(i.Description); var w = SplitWords(u); var (c, st) = Compact(w); return new Entry(i, u, w, c, st); })
             .ToArray();
     }
 
@@ -87,6 +88,57 @@ public sealed class FuzzyMatcher
             .ThenBy(m => m.Item.Description, StringComparer.Ordinal)
             .Take(top)
             .ToList();
+    }
+
+    /// <summary>
+    /// Keyword/brand listing: EVERY item whose name has all the query words, ignoring capitals,
+    /// apostrophes and spacing ("lays" finds LAYS, Lays, LAY'S, LAY S, LAYSKETTLE and LAY 40G).
+    /// No score cut-off and no top-N; sorted by name. Unlike <see cref="Find"/>, near words like
+    /// DAYS or PLAYS don't count, so the list is the brand/keyword and nothing else.
+    /// </summary>
+    public IReadOnlyList<ItemName> FindKeyword(string query, bool includeInactive = false)
+    {
+        var queryWords = QueryWords(query);
+        if (queryWords.Length == 0) return [];
+        // "lay s" typed with a space also means LAYS.
+        var joined = queryWords.Length > 1 ? string.Concat(queryWords) : null;
+        var matches = new List<ItemName>();
+        foreach (var e in _entries)
+        {
+            if (!includeInactive && e.Item.Inactive) continue;
+            if (e.Words.Length == 0) continue;
+            if (queryWords.All(q => KeywordMatch(q, e)) || (joined is not null && KeywordMatch(joined, e)))
+                matches.Add(e.Item);
+        }
+        return matches
+            .OrderBy(i => Clean(i.Description), StringComparer.Ordinal)
+            .ThenBy(i => i.Upc)
+            .ToList();
+    }
+
+    private static bool KeywordMatch(string q, Entry e)
+    {
+        foreach (var d in e.Words)
+        {
+            if (d.StartsWith(q, StringComparison.Ordinal)) return true;                  // LAYS, LAYSKETTLE
+            if (d.Length >= 3 && q.Length - d.Length == 1 && q.StartsWith(d, StringComparison.Ordinal))
+                return true;                                                              // LAY for LAYS
+            if (q.Length >= 5 && Math.Abs(q.Length - d.Length) <= 1 && Levenshtein(q, d) <= 1)
+                return true;                                                              // CUCMBER for CUCUMBER
+        }
+        // Split across words: "LAY S" or "LAY'S" written with a space.
+        foreach (var start in e.WordStarts)
+            if (string.CompareOrdinal(e.Compact, start, q, 0, q.Length) == 0 && e.Compact.Length - start >= q.Length)
+                return true;
+        return false;
+    }
+
+    private static (string Compact, int[] WordStarts) Compact(string[] words)
+    {
+        var sb = new StringBuilder();
+        var starts = new int[words.Length];
+        for (int i = 0; i < words.Length; i++) { starts[i] = sb.Length; sb.Append(words[i]); }
+        return (sb.ToString(), starts);
     }
 
     /// <summary>

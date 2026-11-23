@@ -10,6 +10,12 @@ namespace EstreamAssistant.Core.Changes;
 /// <summary>What an executor run produced. <see cref="Error"/> set = the run itself failed.</summary>
 public sealed record ExecutorRun(IReadOnlyList<EngineResult> Results, string? Error, string Output, string? ResultsFile = null)
 {
+    /// <summary>The number in the script's RESULT line: a new price batch or stock sheet, or a label design.</summary>
+    public int? Id { get; init; }
+    /// <summary>The script's own one-line message (RESULT "message"), when it gave one.</summary>
+    public string? Message { get; init; }
+    public int? Exit { get; init; }
+
     public static ExecutorRun Failed(string error, string output = "") => new([], error, output);
 }
 
@@ -108,10 +114,10 @@ public sealed class MockChangeExecutor(IItemRepository repo, string? resultsFold
 
 /// <summary>
 /// The real engine: powershell.exe -NoProfile -ExecutionPolicy Bypass -File &lt;EngineFolder&gt;\Invoke-EsCsv.ps1 -DryRun -Path &lt;csv&gt;
-/// in the user's session with no console window, then reads Done\&lt;file&gt;_&lt;time&gt;_DRYRUN_results.csv.
-/// Dry-run CSVs are written to the app's own runs folder, NOT to Inbox\, so the PAD flow's
-/// APPLY can never pick up a change list the owner hasn't SAVEd. Apply writes to Inbox\ and
-/// runs Invoke-EsCsv.ps1 -Path &lt;csv&gt;, which moves the CSV to Done\.
+/// in the user's session with no console window, then reads Done\&lt;file&gt;_&lt;time&gt;[_DRYRUN]_results.csv.
+/// Every CSV (dry run AND save) is written to the app's own runs folder, NEVER to Inbox\: Invoke-EsCsv.ps1 only
+/// moves a file to Done\ when it runs without -Path, so a SAVE file left in Inbox\ would be applied AGAIN by the
+/// next plain Invoke-EsCsv run (PAD flow, or someone running the script by hand).
 /// </summary>
 public sealed class PowerShellChangeExecutor(string engineFolder, string runsFolder, AppLog? log = null) : IChangeExecutor
 {
@@ -122,7 +128,6 @@ public sealed class PowerShellChangeExecutor(string engineFolder, string runsFol
 
     public string ScriptPath => Path.Combine(engineFolder, "Invoke-EsCsv.ps1");
     public string DoneFolder => Path.Combine(engineFolder, "Done");
-    public string InboxFolder => Path.Combine(engineFolder, "Inbox");
     public string? ResultsFolder => DoneFolder;
 
     public Task<ExecutorRun> DryRunAsync(string csv, int itemCount, CancellationToken ct) =>
@@ -140,10 +145,9 @@ public sealed class PowerShellChangeExecutor(string engineFolder, string runsFol
             return ExecutorRun.Failed("Another eStream operation is already running.");
         try
         {
-            var folder = apply ? InboxFolder : runsFolder;
-            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(runsFolder);
             var baseName = $"assistant_{DateTime.Now:yyyyMMdd-HHmmss}";
-            var csvPath = Path.Combine(folder, baseName + ".csv");
+            var csvPath = Path.Combine(runsFolder, baseName + ".csv");
             await File.WriteAllBytesAsync(csvPath, ChangesCsv.Encode(csv), ct).ConfigureAwait(false);
             var started = DateTime.Now.AddSeconds(-2);
             var what = apply ? "save" : "dry run";
