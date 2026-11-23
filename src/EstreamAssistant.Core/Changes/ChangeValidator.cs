@@ -49,6 +49,10 @@ public static class ChangeValidator
             if ((int)f != item.For) fields.Add(new(ChangeField.For, item.For.ToString(), ((int)f).ToString(), item.For, f));
         }
 
+        if (fields.Any(x => x.Field is ChangeField.Price or ChangeField.For)
+            && ForPriceProblem(req.Price ?? item.Price, req.For is decimal nf ? (int)nf : item.For) is { } forProblem)
+            return Skip(forProblem, fields);
+
         if (req.CaseCost is decimal cc)
         {
             if (cc < 0 || cc > 100_000) return Skip($"Case cost {M(cc)} isn't valid.");
@@ -107,6 +111,22 @@ public static class ChangeValidator
             return new(fields, $"Large change: {string.Join(", ", large)}. The owner can allow it on the row.", NeedsForce: true);
 
         return new(fields, null, false);
+    }
+
+    /// <summary>
+    /// eStream refuses "$98.50 For 3" ("will not work for all multiples sold"): the price must split evenly into whole
+    /// cents over the For quantity (test 2, A3). Null when it's fine, else the reason with the nearest prices that work.
+    /// </summary>
+    public static string? ForPriceProblem(decimal price, int forQty)
+    {
+        if (forQty <= 1 || price <= 0) return null;
+        var cents = decimal.Round(price * 100m);
+        if (cents % forQty == 0) return null;
+        var down = (cents - cents % forQty) / 100m;
+        var up = down + forQty / 100m;
+        var options = down > 0 ? $"{M(down)} or {M(up)}" : M(up);
+        return $"eStream won't take {M(price)} for {forQty}: the price must split evenly into cents over {forQty} items. " +
+               $"Use {options} for {forQty}, or a Mix Match group.";
     }
 
     private static ValidationResult Skip(string reason, IReadOnlyList<FieldChange>? fields = null) => new(fields ?? [], reason, false);

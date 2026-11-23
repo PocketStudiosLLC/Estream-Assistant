@@ -115,7 +115,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var r = await Task.Run(() => _pending.DryRunAsync());
         Add(r.Passed ? FeedKind.App : FeedKind.Error, r.Summary + (r.Passed ? " Check the list, then press SAVE." : ""));
-        _chat.AddContextNote($"[dry run by the owner] {r.Summary}");
+        _chat.AddContextNote($"[dry run by the owner at {DateTime.Now:HH:mm}, nothing saved] {r.Summary} Rows: {RowsNote(_pending.Rows)}");
         RefreshPending();
     }
 
@@ -138,19 +138,24 @@ public sealed partial class MainViewModel : ObservableObject
         if (!_pending.CanSave)
         {
             var dry = await Task.Run(() => _pending.DryRunAsync());
-            _chat.AddContextNote($"[dry run before SAVE] {dry.Summary}");
             RefreshPending();
             if (!dry.Passed || !_pending.CanSave)
             {
+                // Say which rows, so Claude can't mix this SAVE up with an earlier one (test 2, B5).
+                _chat.AddContextNote($"[SAVE pressed at {DateTime.Now:HH:mm}: stopped at the check, NOTHING saved] {dry.Summary} Rows: {RowsNote(_pending.Rows)}");
+                _log.Info($"SAVE stopped at the check, nothing saved. {dry.Summary} Rows: {RowsNote(_pending.Rows)}");
                 Add(FeedKind.Error, dry.Summary + " Nothing was saved. Fix or remove the rows marked in the list, then press SAVE again.");
                 return;
             }
+            _chat.AddContextNote($"[SAVE pressed at {DateTime.Now:HH:mm}: check passed, asking the owner] {dry.Summary}");
         }
         var hash = _pending.LastDryRun?.Hash;
         var rows = _pending.RowsToSave;
         if (hash is null || rows.Count == 0) return;
         if (!ConfirmSave(rows))
         {
+            _chat.AddContextNote($"[SAVE at {DateTime.Now:HH:mm}: CANCELLED by the owner at the confirmation window, nothing saved; the rows stay in the list] Rows: {RowsNote(rows)}");
+            _log.Info($"SAVE cancelled at the confirmation window, nothing saved. Rows: {RowsNote(rows)}");
             Add(FeedKind.App, "Save cancelled. Nothing was changed.");
             return;
         }
@@ -164,13 +169,19 @@ public sealed partial class MainViewModel : ObservableObject
             after += $" {lq.Count} shelf label{(lq.Count == 1 ? "" : "s")} to print (Reports > Shelf labels to print)"
                      + (newLabels > 0 ? $", {newLabels} new." : ".");
         Add(r.Ok ? FeedKind.App : FeedKind.Error, after);
-        _chat.AddContextNote($"[saved by the owner] {r.Summary}");
+        _chat.AddContextNote($"[SAVE at {DateTime.Now:HH:mm}: saved by the owner] {r.Summary} Rows: {RowsNote(rows)}");
         RefreshPending();
         // The item card may show old values now.
         if (CurrentItem is not null && rows.Any(x => x.Upc == CurrentItem.Upc))
             await LookupUpcAsync(CurrentItem.UpcText, fromScan: false);
         RunFinished?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>"ITEM A: Price $99.00 → $99.49 (Skipped: …)" for each row, for Claude's notes and the log.</summary>
+    internal static string RowsNote(IReadOnlyList<ChangeRow> rows) =>
+        rows.Count == 0 ? "(none)" : string.Join("; ", rows.Select(r =>
+            $"{r.Description}: {r.ChangesText}" + (r.Status is RowStatus.Skipped or RowStatus.Failed or RowStatus.Unknown
+                ? $" ({r.Status}: {r.Message})" : "")));
 
     // Working overlay (S8 / U8): elapsed time and the expected duration.
     private readonly System.Windows.Threading.DispatcherTimer _workTimer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -359,7 +370,23 @@ public sealed partial class MainViewModel : ObservableObject
     {
         Add(FeedKind.App, "Scan a barcode, or type a UPC or item name and press Enter.");
         if (_lookup.Repository is MockItemRepository)
-            Add(FeedKind.App, "Using MOCK sample data (no eStream on this PC). Change it in Settings on the store PC.");
+        {
+            // Test 2 found a store PC left on Mock: say it loudly when the real engine is right there.
+            bool engineHere = File.Exists(Path.Combine(_settings.EngineFolder, "Invoke-EsCsv.ps1"));
+            if (engineHere || _pending.Executor.DrivesEStream)
+            {
+                Add(FeedKind.Error, "This app is using MOCK sample data, not eStream, although the eStream scripts are on this PC. " +
+                    "Nothing you see or save here is real. Settings: set Data source = Sql and Dry runs with = PowerShell, then restart the app.");
+                _log.Warn("Data source is Mock on a PC with the eStream engine scripts.");
+            }
+            else
+                Add(FeedKind.App, "Using MOCK sample data (no eStream on this PC). Change it in Settings on the store PC.");
+        }
+        else if (!_pending.Executor.DrivesEStream && File.Exists(Path.Combine(_settings.EngineFolder, "Invoke-EsCsv.ps1")))
+        {
+            Add(FeedKind.Error, "Dry runs and saves use the MOCK engine, so SAVE won't change eStream. Settings: set Dry runs with = PowerShell, then restart the app.");
+            _log.Warn("Executor is Mock on a PC with the eStream engine scripts.");
+        }
 
         CheckEStream();
 

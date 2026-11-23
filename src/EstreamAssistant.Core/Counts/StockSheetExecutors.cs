@@ -77,7 +77,8 @@ public sealed class MockStockSheetExecutor(IItemRepository repo) : IStockSheetEx
 /// <summary>
 /// The real engine's stock sheet scripts:
 ///   New-EsStockSheet.ps1 -Path &lt;csv&gt; [-Comment x] [-Check]   exit 0/1/2, last line RESULT: {...,"id":&lt;sheet&gt;,"kind":"StockSheet"}
-///   Publish-EsStockSheet.ps1 -SheetId N [-DryRun]             exit code only (no RESULT line yet)
+///   Publish-EsStockSheet.ps1 -SheetId N [-DryRun]             no RESULT line yet: "POSTED OK" / "DRY RUN: ... ready to post"
+///                                                             (it exits 0 even on "POSTED BUT CHECK", see ToPublishRun)
 /// Counts CSVs go to the app's runs folder, not Inbox\Counts (Invoke-EsCountCsv.ps1 would import those).
 /// </summary>
 public sealed partial class PowerShellStockSheetExecutor(string engineFolder, string runsFolder, AppLog? log = null) : IStockSheetExecutor
@@ -105,11 +106,45 @@ public sealed partial class PowerShellStockSheetExecutor(string engineFolder, st
         return await RunAsync(NewSheet, args, CreateTimeout, CancellationToken.None, "Making the sheet", wantsId: true).ConfigureAwait(false);
     }
 
-    public Task<SheetRun> PostDryRunAsync(int sheetId, CancellationToken ct) =>
-        RunAsync(Publish, ["-SheetId", sheetId.ToString(CultureInfo.InvariantCulture), "-DryRun"], PostTimeout, ct, "Post check");
+    public async Task<SheetRun> PostDryRunAsync(int sheetId, CancellationToken ct)
+    {
+        var run = await EngineScripts.RunAsync(engineFolder, Publish, ["-SheetId", sheetId.ToString(CultureInfo.InvariantCulture), "-DryRun"],
+            PostTimeout, ct, log).ConfigureAwait(false);
+        return ToPublishRun(run, dryRun: true);
+    }
 
-    public Task<SheetRun> PostAsync(int sheetId, CancellationToken ct) =>
-        RunAsync(Publish, ["-SheetId", sheetId.ToString(CultureInfo.InvariantCulture)], PostTimeout, CancellationToken.None, "POST");
+    public async Task<SheetRun> PostAsync(int sheetId, CancellationToken ct)
+    {
+        var run = await EngineScripts.RunAsync(engineFolder, Publish, ["-SheetId", sheetId.ToString(CultureInfo.InvariantCulture)],
+            PostTimeout, CancellationToken.None, log).ConfigureAwait(false);
+        return ToPublishRun(run, dryRun: false);
+    }
+
+    /// <summary>eStream's message for a sheet whose counts add up to 0: it refuses to post it.</summary>
+    public const string NetZeroMessage = "net zero total item count";
+
+    /// <summary>
+    /// Publish-EsStockSheet.ps1 has no RESULT line, and test 2 (A6) showed it exits 0 even when eStream refused the post
+    /// ("POSTED BUT CHECK: ... sheet is not marked closed"). So exit 0 is not enough: a real post must print "POSTED OK",
+    /// a dry run "DRY RUN: ... ready to post". A RESULT line, if a later script version writes one, wins.
+    /// </summary>
+    internal static SheetRun ToPublishRun(ScriptRun run, bool dryRun)
+    {
+        var what = dryRun ? "Post check" : "POST";
+        var basic = ToSheetRun(run, what, wantsId: false);
+        if (!basic.Ok || run.Result is not null) return basic;
+        var output = run.Output;
+        if (output.Contains(NetZeroMessage, StringComparison.OrdinalIgnoreCase))
+            return new(false, "eStream won't post this sheet: its counts add up to 0 (\"You cannot post a Stock Sheet with a net zero total item count\"). " +
+                "Nothing was posted. To set items to 0, change On hand on the item card instead, and delete this sheet in eStream.", output);
+        var marker = dryRun ? "DRY RUN:" : "POSTED OK";
+        var line = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith(marker, StringComparison.OrdinalIgnoreCase));
+        if (line is not null) return new(true, line, output);
+        var check = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("POSTED BUT CHECK", StringComparison.OrdinalIgnoreCase));
+        return new(false, check is not null
+            ? $"{what}: eStream didn't post it as expected. {check} Check the sheet in eStream."
+            : $"{what}: the script finished but didn't say \"{marker}\", so it may not have worked. Check the sheet in eStream. {ScriptRunner.LastLine(output)}".Trim(), output);
+    }
 
     [GeneratedRegex(@"(?:stock\s*)?sheet\s*(?:id|no\.?|number|#)?\s*[:=#]?\s*(\d{3,7})", RegexOptions.IgnoreCase)]
     private static partial Regex SheetIdPattern();

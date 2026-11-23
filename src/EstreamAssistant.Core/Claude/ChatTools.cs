@@ -78,12 +78,12 @@ public static class ChatTools
             {"type":"object","properties":{},"required":[],"additionalProperties":false}
             """),
         new(CalcPrice,
-            "Calculate a selling price from a unit cost. ALWAYS use this for price math; never do the arithmetic yourself. " +
+            "Calculate a selling price from a cost. ALWAYS use this for price math; never do the arithmetic yourself. " +
             "mode 'markup': price = cost x (1 + pct/100). mode 'margin': price = cost / (1 - pct/100). " +
             "Returns the exact price, the price rounded to the cent, the final price (after the store's price-ending rule if apply_endings is true) and the GM%.",
             """
             {"type":"object","properties":{
-              "cost":{"type":"number","description":"Unit cost in dollars, excluding deposit and eco fees."},
+              "cost":{"type":"number","description":"Cost of ONE item sold at the till (lookup_item's pack_cost = case cost / packs per case; eStream's GM uses this), times the For quantity for a 'N for' price. Dollars, excluding deposit and eco fees."},
               "mode":{"type":"string","enum":["markup","margin"]},
               "pct":{"type":"number","description":"The markup or margin percent, e.g. 30 for 30%."},
               "apply_endings":{"type":"boolean","description":"true to round up to the store's price endings (e.g. .49/.99) from Settings."}

@@ -128,6 +128,7 @@ public sealed class ToolExecutor
             packs_per_case = i.PacksPerCase,
             units_per_pack = i.UnitsPerPack,
             unit_cost = i.UnitCost,
+            pack_cost = i.PackCost,
             deposit_code = i.Deposit,
             deposit_amount = i.DepositAmount,
             levy_code = i.Levy,

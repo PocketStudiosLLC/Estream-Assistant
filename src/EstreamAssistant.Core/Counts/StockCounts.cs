@@ -281,6 +281,14 @@ public sealed class StockCounts
 
     // --- engine operations ------------------------------------------------------
 
+    /// <summary>
+    /// eStream refuses to post a sheet whose counts add up to 0 ("net zero total item count", test 2 A6), and the post
+    /// check doesn't catch it. So the app never makes one.
+    /// </summary>
+    public const string ZeroTotalReason =
+        "eStream can't post a stock sheet whose counts add up to 0. To set items to 0 on hand, use Change… on the item card " +
+        "(On hand) instead, or count them on a sheet together with other items.";
+
     /// <summary>"Check with eStream": the engine's own preview (-Check). Changes nothing.</summary>
     public Task<SheetRun> CheckAsync(CancellationToken ct = default)
     {
@@ -301,6 +309,7 @@ public sealed class StockCounts
         comment = (comment ?? "").Trim();
         if (comment.Length > 60) comment = comment[..60];
         if (rows.Count == 0) return new(false, "There are no counts.", "");
+        if (rows.Sum(r => r.Count) == 0) return new(false, ZeroTotalReason, "");
         var csv = CountsCsv.Write(rows);
         var hash = CountsCsv.Hash(csv);
         StockSheetRecord? dup;
@@ -369,6 +378,8 @@ public sealed class StockCounts
         lock (_gate) s = _sheets.FirstOrDefault(x => x.SheetId == id);
         if (s is null) return $"Sheet {id} wasn't made by this app, so it can't be posted here.";
         if (s.Posted) return $"Sheet {id} was already posted on {s.PostedTime:MMM d}.";
+        if (s.CountsCsv is { Length: > 0 } csv && CountsCsv.Parse(csv).Rows is { Count: > 0 } lines && lines.Sum(l => l.Count) == 0)
+            return ZeroTotalReason;
         if (s.IsMock != _executor.IsMock) return s.IsMock ? "This is a TEST sheet from the mock engine." : "This sheet was made with the real engine; switch back to PowerShell to post it.";
         return null;
     }

@@ -66,10 +66,13 @@ public sealed class PendingChanges
     /// </summary>
     public IPriceBatchExecutor? PriceBatches { get; set; }
     /// <summary>
-    /// Automatic, no setting: 2+ items that only change price / For / case cost go in one batch (one eStream screen,
-    /// one apply); a single item goes through the item editor, which is quicker for one. 0 = never (tests only).
+    /// Automatic, no setting: 4+ items that only change price / For / case cost go in one batch (one eStream screen,
+    /// one apply); fewer go through the item editor. Measured on the store PC (test 2): the editor takes ~33 s an item
+    /// (check + save), a batch ~16 s + 9 s a line to import, the same again for its check, and ~22 s to apply, so the
+    /// batch is only quicker from about 4 items. 0 = never (tests only).
     /// </summary>
-    public int PriceBatchMinItems { get; set; } = 2;
+    public int PriceBatchMinItems { get; set; } = DefaultPriceBatchMinItems;
+    public const int DefaultPriceBatchMinItems = 4;
     /// <summary>The owner's pending price batches (never applied by the app).</summary>
     public Func<IReadOnlyCollection<int>> ProtectedBatches { get; set; } = () => [];
 
@@ -679,9 +682,11 @@ public sealed class PendingChanges
         if (item is not null && v.Fields.Any(f => f.Field is ChangeField.Price or ChangeField.For or ChangeField.CaseCost))
         {
             decimal New(ChangeField f, decimal now) => v.Fields.FirstOrDefault(x => x.Field == f)?.NewValue ?? now;
-            var units = item.PacksPerCase * item.UnitsPerPack;
-            var unitNow = item.UnitCost;
-            var unitNew = units > 0 && v.Fields.Any(f => f.Field == ChangeField.CaseCost) ? New(ChangeField.CaseCost, item.CaseCost) / units : unitNow;
+            // eStream's GM is per pack (case cost ÷ packs per case), not per unit.
+            var unitNow = item.PackCost;
+            var unitNew = v.Fields.Any(f => f.Field == ChangeField.CaseCost)
+                ? PricingCalculator.PackCost(New(ChangeField.CaseCost, item.CaseCost), item.PacksPerCase, item.UnitsPerPack, item.UnitCost)
+                : unitNow;
             decimal Gm(decimal price, decimal forQty, decimal unit) =>
                 forQty >= 1 && price > 0 ? PricingCalculator.GrossMarginPct(price / forQty, unit) : 0;
             gmNow = Gm(item.Price, item.For, unitNow);

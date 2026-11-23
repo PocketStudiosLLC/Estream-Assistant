@@ -50,25 +50,28 @@ Everything below is built but hasn't been tried for real yet. Most of it needs t
 - [ ] A script timeout is handled (rows show Failed, app keeps working).
 - [ ] Engine calls show in the app log with exit code and time.
 
-## Phase C features (on the store PC, TEST items 2999990000011 / 2999990000028 first)
-- [ ] Price batch: stage price changes (prices ending in 0 or 5) for 2+ items (TEST items A and B are enough), dry run: the rows say "Price batch dry run OK",
-      and no new batch is left in Inventory > Price Batches.
-- [ ] Price batch SAVE (owner watching): the batch is made, then applied (can take ~3 minutes); rows show Applied, and
-      Inventory + the till prices match. The app log shows the batch number.
-- [ ] A list with one deposit/min/max row and three price rows: the one row goes through the item editor, the rest through the batch.
-- [ ] A price like $4.99 stays on the item editor (the batch would round it to $5.00).
-- [ ] Receipt → *Add stock (stock sheet)…*: the confirmation shows "on hand X + received Y = count Z" (negative on hand as 0),
-      the sheet is made, the receipt lines show "on stock sheet N", and a second press leaves them out.
-- [ ] Post that sheet from the Stock counts tab (owner's real receipt only): on hand goes up by exactly the received units.
-- [ ] Receipt pack sizes: a case line gives qty × packs × units; check a few real invoices against eStream's case sizes.
-- [ ] Reports → Shelf labels to print → *Queue in eStream…*: the labels show in Labels Print under the chosen design,
-      the owner's other queued labels are untouched, and queued items leave the app's list.
-- [ ] A "2 for" label: check how it prints on GROCERY SHELVES (Phase C saw "2 For $" with no amount).
-- [ ] Claude: "add the stock from this receipt" uses receipt_stock_sheet; "queue the labels" uses queue_shelf_labels; both ask first.
+## Phase C features: tested on the store PC in test 2 (v0.1.6, 2026-11-23), all passed
+Report: `complete/` (gitignored). Price batch import/apply, item editor SAVE, receipt → stock sheet → POST,
+label queueing, the large-change stop and Claude asking before receipt_stock_sheet all worked on the TEST items.
+Timings: batch import ~16 s + 9 s/line, apply ~22 s; item editor ~14 s check + ~19 s save per item.
+
+## v0.1.7 (fixes from test 2): run `docs/test3.txt` on the store PC
+- [ ] GM% in pending rows, receipt lines and the margin report matches eStream (cost per pack = case cost ÷ packs).
+- [ ] Receipt "30% margin" prices from the pack cost.
+- [ ] "N for" price that doesn't split into cents is skipped with prices that work.
+- [ ] 2 price changes go through the item editor (batches only from 4 items); write down the times.
+- [ ] Claude describes a cancelled SAVE and a stopped SAVE correctly; both are in the app log.
+- [ ] A stock sheet whose counts add up to 0 is refused; a real POST still shows "POSTED OK".
+- [ ] No red MOCK warning with Data source = Sql / Dry runs = PowerShell.
+- [ ] Owner: preview a "2 for" label (does it show the price?), remove the 4 TEST labels, decide on open sheet 10761.
+- [ ] Real items: check a few items' Packs/Case and Units/Pack in eStream. If many real items have units per pack > 1
+      for things sold one at a time, the receipt's received units (cases × packs × units) need another look.
 
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).
-- [ ] Publish-EsStockSheet.ps1: give it a RESULT line and exit codes like the other scripts (hand-off suggestion).
+- [ ] Publish-EsStockSheet.ps1: give it a RESULT line and exit 1 on "POSTED BUT CHECK" (test 3 step 6; the app
+      already reads "POSTED OK" / "DRY RUN:" and a RESULT line when there is one).
+- [ ] Invoke-EsCsv.ps1 -Path leaves the CSV in Inbox (the app isn't affected: it uses its own runs folder).
 - [ ] Import-EsPriceBatch.ps1: a clearer per-line status than "DryRunOK" for lines in a real pending batch (the app copes as it is).
 - [ ] Power Automate Desktop executor (optional; needs a non-interactive flow).
 - [ ] Lookups through `Get-EsItem.ps1` when SQL is down.

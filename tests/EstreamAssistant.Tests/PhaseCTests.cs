@@ -121,19 +121,26 @@ public sealed class PhaseCTests : IDisposable
         {
             PriceBatches = batches, Labels = labels,
         };
-        if (minItems is { } m) p.PriceBatchMinItems = m;
+        p.PriceBatchMinItems = minItems ?? 2;   // most tests: 2 items are enough for a batch
         return (p, repo, batches, labels);
     }
 
     [Fact]
-    public async Task Two_items_use_a_price_batch_without_any_setting()
+    public async Task By_default_only_four_or_more_items_use_a_price_batch()
     {
-        // The two TEST items on the store PC must be enough to exercise the batch path.
-        var (p, _, batches, _) = MakePending();
-        await p.StageAsync(ThreePrices.Take(2).ToList());
+        // Test 2 on the store PC: the item editor is quicker for 2-3 items, a batch from about 4.
+        var (p, _, batches, _) = MakePending(minItems: PendingChanges.DefaultPriceBatchMinItems);
+        Assert.Equal(4, PendingChanges.DefaultPriceBatchMinItems);
+        await p.StageAsync(ThreePrices);
         var dry = await p.DryRunAsync();
-        Assert.True(dry.Passed);
-        Assert.Equal(2, p.Rows.Count(r => r.ViaPriceBatch));
+        Assert.True(dry.Passed, dry.Summary);
+        Assert.Equal(0, p.Rows.Count(r => r.ViaPriceBatch));
+        Assert.Equal(0, batches.ImportCalls);
+
+        await p.StageAsync([new ChangeRequest { Upc = "68700001017", Price = 6.55m }]);
+        dry = await p.DryRunAsync();
+        Assert.True(dry.Passed, dry.Summary);
+        Assert.Equal(4, p.Rows.Count(r => r.ViaPriceBatch));
         Assert.Equal(1, batches.ImportCalls);
     }
 

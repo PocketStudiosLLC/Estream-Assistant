@@ -160,7 +160,7 @@ App files (settings, encrypted API key, name cache, logs) live in `%LOCALAPPDATA
       Every engine call is logged with its arguments, exit code and time (11), and a warm chat with no cache reads is logged
       as a warning (7.1).
 - [x] **Phase C** (store PC hand-off, 2026-11-22; scripts and map in `Handoff/`, not in git):
-      **Price batches**: when 2 or more pending rows change only price, For or case cost (automatic, no setting),
+      **Price batches**: when 4 or more pending rows (2 before v0.1.7; test 2 timed the editor as quicker for 2-3) change only price, For or case cost (automatic, no setting),
       the dry run runs `Import-EsPriceBatch.ps1 -DryRun` for them (batch made, checked, deleted) and SAVE runs the real import,
       then `Apply-EsPriceBatch.ps1` (no undo; eStream can take minutes). The batch is applied only if every line came out right;
       otherwise it stays pending (dated in the past, so it never applies by itself) and the owner is told to delete it. Rows with

@@ -364,7 +364,8 @@ public sealed class MockItemRepository : IItemRepository
                 Max = Dec("MaxSOH"),
                 Sold = Dec("Sold"),
                 Inactive = Dec("Inactive") != 0,
-                GmPct = Pricing.PricingCalculator.GrossMarginPct(price, unitCost),
+                GmPct = Pricing.PricingCalculator.GrossMarginPct(price / Math.Max(1, (int)Dec("PriceMult")),
+                    Pricing.PricingCalculator.PackCost(Dec("CaseCost"), Dec("PacksPerCase"), Dec("UnitsPerPack"), unitCost)),
             });
         }
         return items;
@@ -373,34 +374,35 @@ public sealed class MockItemRepository : IItemRepository
     /// <summary>
     /// MOCK sample items. The first two UPCs/names are real eStream items from the
     /// Phase 7 acceptance list; ALL prices, costs and stock numbers are made up.
+    /// Case sizes as eStream keeps them: packs per case = items sold at the till, units per pack 1.
     /// </summary>
     public static IReadOnlyList<Item> SampleItems() =>
     [
-        Mk(60410079591, "LAYS ALL DRESS 220 g", 4.29m, 1, 52.80m, 1, 16, 10, sold: 412, onHand: 14, min: 6, max: 24),
-        Mk(60410079966, "CUCMBER LAYS", 4.29m, 1, 52.80m, 1, 16, 0, sold: 120, onHand: 9, min: 4, max: 16),
-        Mk(60410004128, "LAY'S CUCUMBER 40G", 1.79m, 1, 30.00m, 1, 30, 0, sold: 88, onHand: 22, min: 10, max: 40),
+        Mk(60410079591, "LAYS ALL DRESS 220 g", 4.29m, 1, 52.80m, 16, 1, 10, sold: 412, onHand: 14, min: 6, max: 24),
+        Mk(60410079966, "CUCMBER LAYS", 4.29m, 1, 52.80m, 16, 1, 0, sold: 120, onHand: 9, min: 4, max: 16),
+        Mk(60410004128, "LAY'S CUCUMBER 40G", 1.79m, 1, 30.00m, 30, 1, 0, sold: 88, onHand: 22, min: 10, max: 40),
         // Mix Match group 12 (sample): a price change on one of these changes both.
-        Mk(60410041277, "LAYS CLASSIC 235G", 4.29m, 1, 52.80m, 1, 16, 0, sold: 530, onHand: 18, min: 6, max: 24, mixMatch: 12),
+        Mk(60410041277, "LAYS CLASSIC 235G", 4.29m, 1, 52.80m, 16, 1, 0, sold: 530, onHand: 18, min: 6, max: 24, mixMatch: 12),
         // Same brand written different ways (lower case, split apostrophe, run together): for list_items.
-        Mk(60410041444, "lays salt & vinegar 235g", 4.29m, 1, 52.80m, 1, 16, 0, sold: 140, onHand: 8, min: 0, max: 0, mixMatch: 12),
-        Mk(60410040011, "LAY S BBQ 40G", 1.79m, 1, 30.00m, 1, 30, 0, sold: 61, onHand: 15, min: 0, max: 0),
-        Mk(60410090055, "LAYSKETTLE JALAPENO", 4.49m, 1, 52.80m, 1, 16, 0, sold: 35, onHand: 6, min: 0, max: 0),
-        Mk(67000000409, "COKE 2L", 3.99m, 1, 20.16m, 1, 8, 20, sold: 610, onHand: 30, min: 12, max: 48, levy: 1),
+        Mk(60410041444, "lays salt & vinegar 235g", 4.29m, 1, 52.80m, 16, 1, 0, sold: 140, onHand: 8, min: 0, max: 0, mixMatch: 12),
+        Mk(60410040011, "LAY S BBQ 40G", 1.79m, 1, 30.00m, 30, 1, 0, sold: 61, onHand: 15, min: 0, max: 0),
+        Mk(60410090055, "LAYSKETTLE JALAPENO", 4.49m, 1, 52.80m, 16, 1, 0, sold: 35, onHand: 6, min: 0, max: 0),
+        Mk(67000000409, "COKE 2L", 3.99m, 1, 20.16m, 8, 1, 20, sold: 610, onHand: 30, min: 12, max: 48, levy: 1),
         Mk(67000001123, "COCA COLA 355ML 12PK", 9.49m, 1, 15.20m, 2, 1, 120, sold: 240, onHand: 11, min: 4, max: 16),
-        Mk(69000002056, "PEPSI 2L", 3.79m, 1, 19.20m, 1, 8, 20, sold: 300, onHand: 16, min: 8, max: 32, levy: 1),
-        Mk(28400090360, "DORITOS NACHO CHS 235G", 4.79m, 1, 52.80m, 1, 16, 0, sold: 275, onHand: 7, min: 6, max: 24),
-        Mk(68700001017, "MILK 2% 4L", 6.49m, 1, 21.00m, 1, 4, 0, sold: 900, onHand: 12, min: 8, max: 24),
-        Mk(68300001110, "BREAD WHITE 570G", 3.69m, 1, 24.00m, 1, 12, 0, sold: 700, onHand: 10, min: 6, max: 18),
-        Mk(4011, "BANANAS", 0.39m, 1, 30.00m, 1, 100, 0, sold: 1500, onHand: 60, min: 20, max: 120),
-        Mk(68000001236, "KRAFT DINNER ORIG 225G", 2.00m, 2, 13.92m, 1, 12, 0, sold: 450, onHand: 24, min: 12, max: 48),
-        Mk(57000002152, "HEINZ KETCHUP 1L", 5.49m, 1, 39.00m, 1, 12, 0, sold: 130, onHand: 5, min: 3, max: 12),
-        Mk(65633001015, "CHEERIOS 430G", 6.99m, 1, 59.40m, 1, 12, 0, sold: 160, onHand: 6, min: 3, max: 12),
+        Mk(69000002056, "PEPSI 2L", 3.79m, 1, 19.20m, 8, 1, 20, sold: 300, onHand: 16, min: 8, max: 32, levy: 1),
+        Mk(28400090360, "DORITOS NACHO CHS 235G", 4.79m, 1, 52.80m, 16, 1, 0, sold: 275, onHand: 7, min: 6, max: 24),
+        Mk(68700001017, "MILK 2% 4L", 6.49m, 1, 21.00m, 4, 1, 0, sold: 900, onHand: 12, min: 8, max: 24),
+        Mk(68300001110, "BREAD WHITE 570G", 3.69m, 1, 24.00m, 12, 1, 0, sold: 700, onHand: 10, min: 6, max: 18),
+        Mk(4011, "BANANAS", 0.39m, 1, 30.00m, 100, 1, 0, sold: 1500, onHand: 60, min: 20, max: 120),
+        Mk(68000001236, "KRAFT DINNER ORIG 225G", 2.00m, 2, 13.92m, 12, 1, 0, sold: 450, onHand: 24, min: 12, max: 48),
+        Mk(57000002152, "HEINZ KETCHUP 1L", 5.49m, 1, 39.00m, 12, 1, 0, sold: 130, onHand: 5, min: 3, max: 12),
+        Mk(65633001015, "CHEERIOS 430G", 6.99m, 1, 59.40m, 12, 1, 0, sold: 160, onHand: 6, min: 3, max: 12),
         // Negative on hand (sold more than was received): for the stock reports.
-        Mk(61126999100, "RED BULL 250ML", 3.49m, 1, 52.08m, 1, 24, 10, sold: 340, onHand: -6, min: 6, max: 24),
-        Mk(62000000123, "EGGS LARGE 12", 4.99m, 1, 51.00m, 1, 15, 0, sold: 820, onHand: -11, min: 10, max: 30),
-        Mk(62000000550, "ICE 3KG", 3.29m, 1, 18.00m, 1, 12, 0, sold: 260, onHand: -2, min: 0, max: 0),
+        Mk(61126999100, "RED BULL 250ML", 3.49m, 1, 52.08m, 24, 1, 10, sold: 340, onHand: -6, min: 6, max: 24),
+        Mk(62000000123, "EGGS LARGE 12", 4.99m, 1, 51.00m, 15, 1, 0, sold: 820, onHand: -11, min: 10, max: 30),
+        Mk(62000000550, "ICE 3KG", 3.29m, 1, 18.00m, 12, 1, 0, sold: 260, onHand: -2, min: 0, max: 0),
         // Stored without its check digit (~2% of eStream codes are like this).
-        Mk(6563300102, "OLD DUTCH RIPPLE 255G", 4.49m, 1, 48.00m, 1, 16, 0, sold: 50, onHand: 0, min: 0, max: 0, inactive: true),
+        Mk(6563300102, "OLD DUTCH RIPPLE 255G", 4.49m, 1, 48.00m, 16, 1, 0, sold: 50, onHand: 0, min: 0, max: 0, inactive: true),
     ];
 
     public static CodeTables SampleCodes() => new(
@@ -436,7 +438,7 @@ public sealed class MockItemRepository : IItemRepository
             Min = min,
             Max = max,
             Sold = sold,
-            GmPct = Pricing.PricingCalculator.GrossMarginPct(price / @for, unitCost),
+            GmPct = Pricing.PricingCalculator.GrossMarginPct(price / @for, Pricing.PricingCalculator.PackCost(caseCost, packs, units, unitCost)),
             Inactive = inactive,
             LastUpdated = new DateTime(2026, 11, 1, 9, 0, 0),
             MixMatchId = mixMatch,

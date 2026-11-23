@@ -95,8 +95,8 @@ public sealed class PhaseBTests : IDisposable
 
     // --- margins ----------------------------------------------------------------------
 
-    private static ItemFacts Facts(decimal price, decimal unitCost, int @for = 1, decimal packs = 1, decimal units = 12, decimal caseCost = 10) =>
-        new() { Upc = 1, Price = price, UnitCost = unitCost, For = @for, PacksPerCase = packs, UnitsPerPack = units, CaseCost = caseCost };
+    private static ItemFacts Facts(decimal price, decimal unitCost, int @for = 1, decimal packs = 12, decimal units = 1, decimal? caseCost = null) =>
+        new() { Upc = 1, Price = price, UnitCost = unitCost, For = @for, PacksPerCase = packs, UnitsPerPack = units, CaseCost = caseCost ?? unitCost * packs * units };
 
     [Theory]
     [InlineData(2.00, 2.50, 1, 0, "Below cost")]
@@ -109,6 +109,16 @@ public sealed class PhaseBTests : IDisposable
     [InlineData(5.00, 2.40, 2, 0, null)]
     public void Margin_problems(double price, double cost, int @for, double target, string? expected) =>
         Assert.Equal(expected, ReportService.MarginProblem(Facts((decimal)price, (decimal)cost, @for), (decimal)target, out _, out _));
+
+    [Fact]
+    public void Margin_uses_the_cost_per_pack_like_estream()
+    {
+        // TEST item A on the store PC: 1 pack × 12 units, case $12.00, $99.00 -> eStream's StoreGM 87.88%, not 99%.
+        var f = Facts(99.00m, 1.00m, packs: 1, units: 12, caseCost: 12.00m);
+        Assert.Null(ReportService.MarginProblem(f, 0, out _, out var gm));
+        Assert.Equal(87.88m, gm);
+        Assert.Equal(12.00m, f.PackCost);
+    }
 
     [Fact]
     public void One_by_one_case_with_a_case_cost_is_flagged()

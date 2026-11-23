@@ -1,0 +1,117 @@
+eStream Assistant - Test 3: checks after installing v0.1.7
+============================================================
+Give this whole file to Claude Code on the store's back-office PC. Start Claude Code in C:\eStreamAutomation
+with eStream Office open and logged in. This follows test 2 (Done\test2-report.txt): read that report first.
+
+Who you are working with: the store owner. They know eStream well but aren't technical. Plain words, one step
+at a time, say exactly what to click.
+
+Why this test: test 2 passed, and v0.1.7 fixes what it found: GM% on the cost per pack, failed stock sheet
+posts, sheets whose counts add up to 0, "N for" prices eStream refuses, Claude mixing up SAVEs, and price
+batches only from 4 items. This test checks each fix in the app. It is shorter than test 2: no script timing.
+
+
+SAFETY RULES (same as test 2, they never change)
+- SQL is READ-ONLY: SELECT only (sqlcmd -K ReadOnly or Get-EsItem.ps1).
+- Only touch the TEST records: item A 2999990000011, item B 2999990000028 (vendor 164, category 20510).
+  Never NUTRL 627843437147 or any real item.
+- Never touch the owner's stock sheets 10749, 10750, 10754 or price batches 10208, 10209, 10210.
+- Never clear or print the label queue. Only the owner removes labels.
+- Applying a price batch and posting a stock sheet have NO UNDO. Ask the owner before each one:
+  "This will <what> on the TEST item. OK?" and wait for a yes. (In test 2 the owner said "yes to all future
+  tests you can run now". Ask once at the start whether that still holds today.)
+- Write down the test items' values first and put them back at the end. Expected (end of test 2):
+  A: price 99.00 for 1, case cost 12.00 (1 x 12), on hand 0, min 2, max 12.
+  B: price 98.50 for 2, case cost 12.00 (1 x 12), on hand 0, min 2, max 12.
+  If Get-EsItem.ps1 shows something else, write down what you find instead.
+
+
+0. INSTALL AND LEFTOVERS FROM TEST 2
+------------------------------------
+- Install eStreamAssistant-Setup-0.1.7.exe (no admin rights; "Windows protected your PC" -> More info -> Run
+  anyway). Updating keeps the settings.
+- Start the app: the title shows 0.1.7, and the log (%LOCALAPPDATA%\eStreamAssistant\logs, newest file) has
+  "Data source: eStream SQL (read-only).", "Dry runs: PowerShell scripts." and
+  "Price batches: PowerShell price batch, for 4+ price/cost-only rows (automatic)."
+  The chat must NOT show a red "This app is using MOCK sample data" message.
+- Leftovers from test 2. Ask the owner to do these, or to say they'll do them later:
+  a) The 4 TEST labels in Labels Print, GROCERY SHELVES (UniqueID 52544-52547: A x2, B x2). Preview one of B's
+     (don't print): does the "2 for" label show the price? Then remove all 4 the way the owner normally does,
+     and write down how.
+  b) Stock sheet 10761 ("Receipt TEST2 back") is still OPEN with a count of 0. eStream can't post it. Ask whether
+     the owner wants to delete it in eStream.
+
+
+1. GM% MATCHES eSTREAM
+----------------------
+- Look up item A in the app. The card's GM is 87.9% (eStream's StoreGM, as before).
+- Change... on item A, price 99.50, Add. The pending row must show GM about 87.9% -> 87.9% (eStream's own
+  figure would be 87.94%). In test 2 this row showed "99% -> 99%". Remove the row (Clear), nothing saved.
+- Make a fake receipt for item A as in test 2 B5 (case price $12.50, 1 case). The receipt line's "Price $99.00
+  stays: GM at the new cost ..." must say about 87.4% (12.50 / 99.00), not 99%. Then ask Claude for
+  "30% margin on this line": the proposed price must be about $17.86 (12.50 / 0.70, then the store's
+  price endings), NOT about $1.49. Don't stage it. Finish the receipt without changes.
+
+
+2. "N FOR" PRICES eSTREAM REFUSES
+---------------------------------
+- Change... on item B, For 3 (price left at 98.50), Add. The row must be Skipped straight away with
+  "eStream won't take $98.50 for 3 ... Use $98.49 or $98.52 for 3". Press SAVE: no script runs, nothing saved.
+- Change it to For 5 (98.50 / 5 = 19.70): the row is fine. Clear the list, nothing saved.
+
+
+3. PRICE BATCHES ONLY FROM 4 ITEMS
+----------------------------------
+- In the chat: "change the price of 2999990000011 to 99.50 and 2999990000028 to 98.00" (keep B's "2 for").
+- Press SAVE. The check must go through the ITEM EDITOR (Invoke-EsCsv -DryRun in the log, no price batch),
+  and the confirmation window must NOT mention a price batch. Write down the time from SAVE to the window.
+- With the owner's OK, Save. Write down the time. Expect "Saved: 2 applied". Check with Get-EsItem.ps1.
+  Compare with test 2 B2 (42 s + 60 s through a batch).
+- Put the prices back the same way (A 99.00, B 98.50 for 2), time it again.
+- (4+ items through a batch can't be tried: there are only 2 TEST items. The app's tests cover it.)
+
+
+4. CLAUDE AND THE SAVE NOTES
+----------------------------
+- Stage A 99.49 and B 98.00 (item card). SAVE -> at the confirmation window press Cancel.
+- Stage A 158.40 (+60%) instead. SAVE -> stopped by the safety rule, nothing saved.
+- Ask Claude: "what happened with my last two saves?". It must say: the first was CANCELLED by you at the
+  confirmation (A 99.49, B 98.00), the second stopped because A's price went up 60% (A 158.40). Nothing saved.
+  Write down its answer word for word.
+- The app log must have a "SAVE cancelled at the confirmation window" line and a "SAVE stopped at the check"
+  line, each with the rows.
+- Clear the list.
+
+
+5. STOCK SHEETS
+---------------
+5a. Counts that add up to 0. Stock counts tab: count item A = 0 (only that line). Press Make stock sheet.
+    Expect a refusal: "eStream can't post a stock sheet whose counts add up to 0 ..." and NO sheet made (check
+    Inventory > Stock Sheets: no new sheet). Clear the count list.
+5b. A real post still works (owner's OK, no undo). Receipt -> stock sheet for item A as in test 2 B5
+    (1 case = 12 units), then Post... from the Stock counts tab. The post window's result must say
+    "POSTED OK: sheet N closed ..." and the sheet line "POSTED". Get-EsItem: A on hand 0 -> 12.
+    Put it back with Change... on item A, On hand 0, SAVE (as in test 2).
+
+
+6. OPTIONAL - script fixes for the developer (ask the owner first; the app works either way)
+--------------------------------------------------------------------------------------------
+These are in the store PC's own scripts, not the app. Only change them if the owner agrees, keep a copy of
+the old file (e.g. Publish-EsStockSheet.ps1.bak-test3), and run the script's dry run afterwards.
+- Publish-EsStockSheet.ps1: on "POSTED BUT CHECK" (and on eStream's "net zero total item count" message) exit 1,
+  not 0. If you can, end every run with a RESULT line like the other scripts:
+    RESULT: {"ok":true|false,"dryRun":true|false,"id":<sheet>,"kind":"StockSheetPost","message":"..."}
+  The app reads that line when it's there, and otherwise looks for "POSTED OK" / "DRY RUN:".
+- Invoke-EsCsv.ps1 -Path leaves the saved CSV in Inbox (line ~88 only moves files when run without -Path). The
+  app doesn't use Inbox, so it's only a risk for files put there by hand. Fix CLAUDE.md's sentence "After a real
+  apply the CSV moves to Done" or make the script move -Path files that are inside Inbox. Owner's choice.
+- Add-EsLabelBatch.ps1 says "1 line(s) in GROCERY SHELVES queue" for an item that already had a queued label
+  (it counts only the line it added). Cosmetic.
+
+
+WHAT TO SEND BACK
+-----------------
+Write C:\eStreamAutomation\Done\test3-report.txt with, for each step: what you did, pass or fail, the times from
+step 3, Claude's answer from step 4, anything that behaved differently from this file, what the owner said about
+the leftovers in step 0, and the final values of items A and B (they must match the values you wrote down at the
+start). Copy that file and the app's log for the test day into a folder for the developer.

@@ -296,12 +296,16 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>A new unit cost as a pack cost (unit cost × units per pack), the basis of eStream's GM%.</summary>
+    internal static decimal PackCostOf(Item item, decimal unitCost) => unitCost * Math.Max(1, item.UnitsPerPack);
+
     private ReceiptLine ApplyRule(ReceiptLine line, PriceRule rule)
     {
         var item = line.Item!;
-        var unitCost = line.UnitCost!.Value;
-        // The price is for the item's For quantity ("2 for $5"), so price that many units.
-        var r = PricingCalculator.Calculate(unitCost * Math.Max(1, item.For), rule.Mode, rule.Pct,
+        // The price is per pack (one item sold at the till; eStream's GM uses case cost ÷ packs), and for the
+        // item's For quantity ("2 for $5"), so price that many packs.
+        var packCost = PackCostOf(item, line.UnitCost!.Value);
+        var r = PricingCalculator.Calculate(packCost * Math.Max(1, item.For), rule.Mode, rule.Pct,
             rule.ApplyEndings ? priceEndings() : null);
         return line with { Rule = rule, ProposedPrice = r.Price, ProposedGm = r.GmPct };
     }
@@ -398,7 +402,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
                 if (Math.Abs(changePct.Value) > 50)
                     warnings.Add($"The cost changes by {changePct:0.#}%. Check the case size and this line.");
             }
-            if (item.Price > 0) gmNow = PricingCalculator.GrossMarginPct(item.Price / Math.Max(1, item.For), uc);
+            if (item.Price > 0) gmNow = PricingCalculator.GrossMarginPct(item.Price / Math.Max(1, item.For), PackCostOf(item, uc));
         }
 
         decimal? receivedUnits = null;

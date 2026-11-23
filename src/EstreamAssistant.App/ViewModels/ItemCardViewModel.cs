@@ -33,7 +33,7 @@ public sealed partial class ItemCardViewModel : ObservableObject
         PackText = $"{Num(item.PacksPerCase)} pack × {Num(item.UnitsPerPack)} units";
         UnitCostText = "$" + item.UnitCost.ToString("0.00##", CultureInfo.InvariantCulture);
         // eStream shows GM 0 when the cost is above the price (manual: Inventory - Fields).
-        GmText = item.For > 0 && item.UnitCost > item.Price / item.For && item.Price > 0
+        GmText = item.For > 0 && item.PackCost > item.Price / item.For && item.Price > 0
             ? "below cost"
             : $"{item.GmPct:0.0}%";
         OnHandText = Num(item.OnHand);

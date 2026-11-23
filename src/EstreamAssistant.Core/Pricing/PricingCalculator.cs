@@ -43,6 +43,15 @@ public static class PricingCalculator
         ApplyEnding(RoundToCent(price * (1 + pct / 100m)), endings);
 
     /// <summary>GM% = (price - cost) / price x 100, rounded to 2 places. 0 when price is 0.</summary>
+    /// <summary>
+    /// Cost of one pack (one item sold at the till) as eStream works it out for GM%: case cost ÷ packs per case.
+    /// Without a case cost or pack count: unit cost × units per pack.
+    /// </summary>
+    public static decimal PackCost(decimal caseCost, decimal packsPerCase, decimal unitsPerPack, decimal unitCost) =>
+        caseCost > 0 && packsPerCase > 0
+            ? Math.Round(caseCost / packsPerCase, 4, MidpointRounding.AwayFromZero)
+            : unitCost * Math.Max(1, unitsPerPack);
+
     public static decimal GrossMarginPct(decimal price, decimal cost) =>
         price == 0 ? 0 : Math.Round((price - cost) / price * 100m, 2, MidpointRounding.AwayFromZero);
 

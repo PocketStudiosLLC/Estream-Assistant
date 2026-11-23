@@ -22,3 +22,5 @@ Manuals/
 # Phase C handoff from the store PC (scripts, map, store data)
 PhaseC-handoff/
 Handoff/
+# Store-PC test results (reports, app and engine logs with store data)
+complete/

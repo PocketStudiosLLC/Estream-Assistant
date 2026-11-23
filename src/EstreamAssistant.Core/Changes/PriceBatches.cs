@@ -160,7 +160,8 @@ public sealed class MockPriceBatchExecutor(IItemRepository repo, string? results
             For = forQty,
             CaseCost = caseCost,
             UnitCost = Math.Round(caseCost / units, 4),
-            GmPct = Pricing.PricingCalculator.GrossMarginPct(price / Math.Max(1, forQty), Math.Round(caseCost / units, 4)),
+            GmPct = Pricing.PricingCalculator.GrossMarginPct(price / Math.Max(1, forQty),
+                Pricing.PricingCalculator.PackCost(caseCost, i.PacksPerCase, i.UnitsPerPack, Math.Round(caseCost / units, 4))),
             LastUpdated = DateTime.Now,
         };
     }
