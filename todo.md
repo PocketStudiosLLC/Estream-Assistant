@@ -63,17 +63,21 @@ Found and fixed in v0.1.8: GM per pack wrong for the store's 3496 "1 × N" items
 timeout too short when eStream Server is busy, a half-made stock sheet shown as fine, Claude not knowing lists were
 cleared, receipt codes that are shelf codes (Costco).
 
-## v0.1.8: run `docs/test4.txt` on the store PC
-- [ ] Item B back to 98.50 for 2 (test 3 left it at 98.00).
-- [ ] GM on "1 × N" items (COCA-COLA 6782900 ~79.6%) and the eStream note on the item card; margin reports run.
-- [ ] Claude: empty lists said empty; 2 prices staged without "already" or a batch promise.
-- [ ] SAVE timings with 120 s + 90 s/item; settings.json migrated.
-- [ ] Test 3 leftovers: SAVE notes (step 4), receipt → sheet → POST with the fixed Publish script's RESULT line,
-      Invoke-EsCsv moving an Inbox file, "save the changes now" refused, optional real-item dry run.
-- [ ] Costco receipt: shelf-code matches, 1019 asks to pick, negative on-hand warning, sheet 10763 marked NOT RIGHT.
-- [ ] Owner: pack-size questions (Coke 1 × 32, cigarettes 1 × 10, concrete 1 × 56), labels, sheets 10761/10763,
-      scanner, drag and drop, phone photos, print, scaling, a real invoice.
-- [ ] Why MINI BELLA MUSHROOMS 771163002506 was left off sheet 10763 by New-EsStockSheet.ps1.
+## v0.1.8: tested in test 4 (2026-11-23), all passed
+GM on "1 × N" items, margin reports, Claude and the lists, SAVE timings (~18 s an item), test 3 leftovers (SAVE notes,
+receipt guard, POST with the fixed Publish script's RESULT line, Invoke-EsCsv moving Inbox files, save refused, real-item
+dry run), Costco shelf-code matching, negative on-hand warning, Reports → Stock sheets with protected marks.
+Found and fixed in v0.1.9: numbered facts turned into buttons / lost, deleted sheet still listed, settings file not
+rewritten until Save, GM note on 1 × 1 items, double full stop, 12-digit barcode warning.
+
+## v0.1.9: run `docs/test5.txt` on the store PC
+- [ ] Facts lists stay as text, choices still buttons ("lays cucumber").
+- [ ] Sheet 10763 shows "deleted in eStream"; card GM note; 12-digit warning in the Costco stock sheet window.
+- [ ] Owner: pack sizes (Coke 1 × 32, cigarettes 1 × 10, concrete 1 × 56), count sheet chat question, sheet 10761,
+      TEST labels ("2 for" price on the label?), HAAGEN DAZS 5 for $9.35, CUCMBER LAYS in pending batches.
+- [ ] Owner hands-on: scanner, drag and drop, phone photos, print, scaling, a real invoice.
+- [ ] 12-digit barcodes on stock sheets: does eStream's import find them as 11 digits (drop the check digit)? 12,046
+      items have one. Needs a test item with a 12-digit barcode, or the owner's OK on one real item.
 
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).

@@ -96,7 +96,14 @@ public sealed class AppSettings
         try
         {
             if (File.Exists(path))
-                return (JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), JsonOptions) ?? new AppSettings()).Migrate();
+            {
+                var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), JsonOptions) ?? new AppSettings();
+                if (s.SettingsVersion >= CurrentSettingsVersion) return s;
+                s.Migrate();
+                // Write the moved values straight away, so the file says what the app uses (test 4).
+                try { s.Save(path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                return s;
+            }
         }
         catch (JsonException)
         {

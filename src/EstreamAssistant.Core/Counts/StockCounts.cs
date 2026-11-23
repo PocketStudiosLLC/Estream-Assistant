@@ -45,6 +45,8 @@ public sealed record StockSheetRecord
     /// </summary>
     public bool Failed { get; init; }
     public string Problem { get; init; } = "";
+    /// <summary>The sheet isn't in eStream any more (deleted there, test 4: sheet 10763).</summary>
+    public bool Gone { get; init; }
 }
 
 public sealed record SheetRun(bool Ok, string Message, string Output, int? SheetId = null);
@@ -324,7 +326,8 @@ public sealed class StockCounts
             return new(false, $"These exact counts were already imported into sheet {dup.SheetId?.ToString() ?? "(number unknown)"} on {dup.Created:MMM d}. " +
                               "Imports add up in eStream, so the app won't import them again.", "");
 
-        var timing = await TimingCheckAsync(rows, ct).ConfigureAwait(false);
+        var timing = (await TimingCheckAsync(rows, ct).ConfigureAwait(false)).ToList();
+        if (TwelveDigitWarning(rows) is { } twelve) timing.Add(twelve);
         foreach (var t in timing) _log?.Warn("Before making a stock sheet: " + t);
         if (!await ConfirmCreate(rows, comment, [.. notes ?? [], .. timing]).ConfigureAwait(false))
             return new(false, "Cancelled. No stock sheet was made.", "");
@@ -364,6 +367,19 @@ public sealed class StockCounts
             : run;
     }
 
+    /// <summary>
+    /// eStream's stock sheet import left out MINI BELLA MUSHROOMS 771163002506 (test 4): the only 12-digit barcode on
+    /// the sheet; 11- and 13-digit codes import fine. The script then reports the sheet as wrong. Say so up front.
+    /// </summary>
+    internal static string? TwelveDigitWarning(IReadOnlyList<CountRow> rows)
+    {
+        var twelve = rows.Where(r => r.Upc.ToString(CultureInfo.InvariantCulture).Length == 12).ToList();
+        if (twelve.Count == 0) return null;
+        return $"{twelve.Count} item{(twelve.Count == 1 ? " has" : "s have")} a 12-digit barcode ({string.Join(", ", twelve.Take(3).Select(r => r.Description))}" +
+               $"{(twelve.Count > 3 ? ", ..." : "")}). eStream's import has left a 12-digit barcode off a sheet before. If that happens, " +
+               "the sheet is marked NOT RIGHT: delete it in eStream and count those items on the Build tab by hand.";
+    }
+
     /// <summary>True when a sheet with exactly these counts was made (even if its number isn't known).</summary>
     public bool HasSheetFor(IReadOnlyList<CountRow> rows)
     {
@@ -396,6 +412,7 @@ public sealed class StockCounts
         lock (_gate) s = _sheets.FirstOrDefault(x => x.SheetId == id);
         if (s is null) return $"Sheet {id} wasn't made by this app, so it can't be posted here.";
         if (s.Posted) return $"Sheet {id} was already posted on {s.PostedTime:MMM d}.";
+        if (s.Gone) return $"Sheet {id} isn't in eStream any more (it was deleted there).";
         if (s.Failed) return $"Sheet {id} isn't right ({s.Problem.TrimEnd('.')}). Don't post it: delete it in eStream.";
         if (s.CountsCsv is { Length: > 0 } csv && CountsCsv.Parse(csv).Rows is { Count: > 0 } lines && lines.Sum(l => l.Count) == 0)
             return ZeroTotalReason;
@@ -403,12 +420,45 @@ public sealed class StockCounts
         return null;
     }
 
-    /// <summary>POST step 1: the engine's dry run (shows what would change). Changes nothing.</summary>
-    public Task<SheetRun> PostDryRunAsync(int sheetId, CancellationToken ct = default)
+    /// <summary>
+    /// Marks the app's unposted sheets that aren't in eStream any more (read-only SQL). Errors are only logged:
+    /// this is a convenience, never a reason to stop.
+    /// </summary>
+    public async Task CheckSheetsStillInEStreamAsync(CancellationToken ct = default)
     {
+        if (_executor.IsMock) return;
+        List<StockSheetRecord> ours;
+        lock (_gate) ours = _sheets.Where(s => s.SheetId is not null && !s.Posted && !s.Gone && !s.IsMock).ToList();
+        if (ours.Count == 0) return;
+        HashSet<int> inEStream;
+        try
+        {
+            inEStream = (await _lookup.Repository.GetStockSheetsAsync(includeClosed: true, ct).ConfigureAwait(false)).Select(s => s.Id).ToHashSet();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log?.Error("Checking the app's stock sheets in eStream failed", ex);
+            return;
+        }
+        // An empty list means the query found nothing at all: don't call every sheet deleted on that.
+        if (inEStream.Count == 0) return;
+        var gone = ours.Where(s => !inEStream.Contains(s.SheetId!.Value)).Select(s => s.SheetId!.Value).ToHashSet();
+        if (gone.Count == 0) return;
+        lock (_gate)
+            for (int i = 0; i < _sheets.Count; i++)
+                if (_sheets[i].SheetId is int id && gone.Contains(id) && !_sheets[i].Posted) _sheets[i] = _sheets[i] with { Gone = true };
+        _log?.Info($"Stock sheets no longer in eStream (deleted there): {string.Join(", ", gone)}.");
+        SaveRegistry();
+        Raise();
+    }
+
+    /// <summary>POST step 1: the engine's dry run (shows what would change). Changes nothing.</summary>
+    public async Task<SheetRun> PostDryRunAsync(int sheetId, CancellationToken ct = default)
+    {
+        await CheckSheetsStillInEStreamAsync(ct).ConfigureAwait(false);
         var blocked = PostBlockedReason(sheetId);
-        if (blocked is not null) return Task.FromResult(new SheetRun(false, blocked, ""));
-        return RunEngineAsync($"Checking sheet {sheetId} before posting", () => _executor.PostDryRunAsync(sheetId, ct));
+        if (blocked is not null) return new SheetRun(false, blocked, "");
+        return await RunEngineAsync($"Checking sheet {sheetId} before posting", () => _executor.PostDryRunAsync(sheetId, ct)).ConfigureAwait(false);
     }
 
     /// <summary>

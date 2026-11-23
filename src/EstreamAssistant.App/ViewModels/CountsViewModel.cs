@@ -28,7 +28,8 @@ public sealed class SheetViewModel(StockSheetRecord s, string? postBlocked)
     public string Detail => $"{Record.Rows} item{(Record.Rows == 1 ? "" : "s")} · made {Record.Created:MMM d, h:mm tt}"
         + (Record.Comment.Length > 0 ? $" · {Record.Comment}" : "")
         + (Record.Posted ? $" · POSTED {Record.PostedTime:MMM d, h:mm tt}" : "")
-        + (Record.Failed ? " · NOT RIGHT: don't post, delete it in eStream" : "");
+        + (Record.Gone ? " · deleted in eStream"
+            : Record.Failed ? " · NOT RIGHT: don't post, delete it in eStream" : "");
     public bool IsPosted => Record.Posted;
     public bool NeedsNumber => Record.SheetId is null;
     public bool CanPost => postBlocked is null;
@@ -53,6 +54,7 @@ public sealed partial class CountsViewModel : ObservableObject
         _lookup = lookup;
         _log = log;
         counts.Changed += (_, _) => OnUi(Refresh);
+        _ = Task.Run(() => counts.CheckSheetsStillInEStreamAsync());
         // F6.3: the in-app confirmation for stage 1, also when Claude asks (create_stock_sheet). Runs on the UI thread.
         counts.ConfirmCreate = (rows, comment, warnings) =>
         {

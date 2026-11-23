@@ -226,3 +226,60 @@ public class Test3SheetRegistryTests
         Assert.False(StockCounts.MarkIfFailed(old with { Posted = true }).Failed);
     }
 }
+
+/// <summary>Fixes from the store PC's test 4 (v0.1.8, 2026-11-23).</summary>
+public sealed class Test4FixesTests : IDisposable
+{
+    private readonly TempDir _dir = new();
+    public void Dispose() => _dir.Dispose();
+
+    private sealed class RealLikeSheets : IStockSheetExecutor
+    {
+        public bool IsMock => false;
+        public Task<SheetRun> CheckAsync(string countsCsv, CancellationToken ct) => Task.FromResult(new SheetRun(true, "", ""));
+        public Task<SheetRun> CreateSheetAsync(string countsCsv, string comment, CancellationToken ct) =>
+            Task.FromResult(new SheetRun(true, "Stock sheet 55555 made.", "Created stock sheet 55555", 55555));
+        public Task<SheetRun> PostDryRunAsync(int sheetId, CancellationToken ct) => Task.FromResult(new SheetRun(true, "", ""));
+        public Task<SheetRun> PostAsync(int sheetId, CancellationToken ct) => Task.FromResult(new SheetRun(true, "", ""));
+    }
+
+    [Fact]
+    public async Task A_sheet_deleted_in_estream_is_marked_and_cant_be_posted()
+    {
+        var repo = new MockItemRepository { Delay = TimeSpan.Zero };
+        var lookup = new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n.json")));
+        var counts = new StockCounts(lookup, new RealLikeSheets(), () => [], _dir.Path) { ConfirmCreate = (_, _, _) => Task.FromResult(true) };
+        await counts.AddAsync([new CountInput("60410079591", 5)], addToExisting: false);
+        Assert.True((await counts.CreateSheetAsync(null, "x")).Ok);
+        Assert.Null(counts.PostBlockedReason(55555));
+
+        await counts.CheckSheetsStillInEStreamAsync();   // the mock eStream has other sheets, not 55555
+        Assert.True(Assert.Single(counts.Sheets).Gone);
+        Assert.Contains("isn't in eStream", counts.PostBlockedReason(55555));
+        Assert.False((await counts.PostDryRunAsync(55555)).Ok);
+    }
+
+    [Fact]
+    public void Twelve_digit_barcodes_get_a_warning_before_the_sheet()
+    {
+        var rows = new List<CountRow>
+        {
+            new(771163002506, "MINI BELLA MUSHROOMS", 1, 0, 1m),
+            new(60410079591, "LAYS ALL DRESS", 3, 0, 1m),
+        };
+        Assert.Contains("MINI BELLA", StockCounts.TwelveDigitWarning(rows));
+        Assert.Null(StockCounts.TwelveDigitWarning(rows.Skip(1).ToList()));
+    }
+
+    [Fact]
+    public void Old_settings_files_are_rewritten_with_the_moved_values()
+    {
+        var path = Path.Combine(_dir.Path, "settings.json");
+        File.WriteAllText(path, """{ "ScriptTimeoutBaseSeconds": 60, "ScriptTimeoutPerItemSeconds": 30 }""");
+        var s = Core.Settings.AppSettings.Load(path);
+        Assert.Equal(120, s.ScriptTimeoutBaseSeconds);
+        var text = File.ReadAllText(path);
+        Assert.Contains("\"ScriptTimeoutBaseSeconds\": 120", text);
+        Assert.Contains("\"SettingsVersion\": 1", text);
+    }
+}

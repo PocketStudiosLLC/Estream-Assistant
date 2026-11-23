@@ -41,7 +41,9 @@ public sealed partial class ItemCardViewModel : ObservableObject
             var gm = Core.Pricing.PricingCalculator.GrossMarginPct(unitPrice, item.SellCost);
             GmText = item.SellCost > unitPrice ? "below cost" : $"{gm:0.0}%";
             if (Math.Abs(gm - item.GmPct) >= 1m)
-                GmText += $"  (eStream shows {item.GmPct:0.0}%: it uses the case cost ÷ packs only)";
+                GmText += item.UnitsPerPack > 1
+                    ? $"  (eStream shows {item.GmPct:0.0}%: it uses the case cost ÷ packs only)"
+                    : $"  (eStream shows {item.GmPct:0.0}%)";
         }
         OnHandText = Num(item.OnHand);
         MinMaxText = $"{Num(item.Min)} / {Num(item.Max)}";

@@ -182,7 +182,7 @@ public sealed partial class PowerShellStockSheetExecutor(string engineFolder, st
         if (run.TimedOut) return new(false, $"{what} took too long and was stopped. Check the eStream screen.", run.Output, id);
         bool ok = run.Exit == 0 && run.Result is not { Ok: false };
         var detail = run.Result?.Message is { Length: > 0 } m ? m : ScriptRunner.LastLine(run.Output);
-        if (ok) return new(true, run.Result?.Message is { Length: > 0 } msg ? msg + "." : $"{what} finished.", run.Output, id);
+        if (ok) return new(true, run.Result?.Message is { Length: > 0 } msg ? msg.TrimEnd('.') + "." : $"{what} finished.", run.Output, id);
         return new(false, run.Refused ? $"{what} was refused: {detail}" : $"{what} failed (exit code {run.Exit}). {detail}", run.Output, id);
     }
 }

@@ -192,8 +192,60 @@ public class ChoiceParserTests
     [Fact]
     public void Last_list_wins()
     {
-        var c = ChoiceParser.Parse("1. a\n2. b\n\nOr:\n1. x\n2. y\n3. z");
+        var c = ChoiceParser.Parse("Which one?\n1. a\n2. b\n\nOr pick one of these:\n1. x\n2. y\n3. z");
         Assert.Equal(["x", "y", "z"], c.Select(x => x.Label));
+    }
+
+    // Test 4 (store PC): real replies where numbered FACTS became buttons, or vanished.
+    private const string SavesReply = """
+        You haven't saved since we last talked, so your last two saves are still the two from 13:04, and neither one changed anything in eStream.
+
+        1. The first one passed the check, but you cancelled it at the confirmation window. It had item A at $99.49 and item B at 2 for $98.00.
+        2. The second one stopped at the check. Its only row, item A at $158.40, was skipped as a "Large change" (60% higher), so nothing was saved.
+
+        Press SAVE when you're ready.
+        """;
+
+    private const string ReceiptReply = """
+        I read the receipt. It has one line, and it's ready in the receipt table.
+
+        ZZ TEST ITEM A - DO NOT SELL, 1 case (1 × 12):
+        1. Case cost $12.00 → $12.50, up 4.2%.
+        2. That makes each unit cost $1.0417 (was $1.00).
+        3. The current price is $99.00, so the margin (GM%) is still about 99%.
+        4. You received 12 units.
+
+        Nothing needs you to pick or fix anything. What would you like to do?
+        1. Update the case cost to $12.50.
+        2. Add the 12 units to stock through a stock sheet.
+        3. Work out a new price from the new cost.
+        """;
+
+    [Fact]
+    public void A_numbered_list_of_facts_is_not_choices_and_stays_in_the_text()
+    {
+        Assert.Empty(ChoiceParser.Parse(SavesReply));
+        Assert.Contains("1. The first one passed the check", ChoiceParser.ForDisplay(SavesReply, hasChoices: false));
+    }
+
+    [Fact]
+    public void Only_the_question_list_becomes_buttons_and_the_facts_list_stays()
+    {
+        var c = ChoiceParser.Parse(ReceiptReply);
+        Assert.Equal(3, c.Count);
+        Assert.Equal("Update the case cost to $12.50.", c[0].Label);
+        var shown = ChoiceParser.ForDisplay(ReceiptReply, hasChoices: true);
+        Assert.Contains("1. Case cost $12.00 → $12.50, up 4.2%.", shown);
+        Assert.Contains("4. You received 12 units.", shown);
+        Assert.DoesNotContain("Update the case cost", shown);
+    }
+
+    [Fact]
+    public void Item_choices_with_a_question_after_them_are_choices()
+    {
+        var c = ChoiceParser.Parse("ZZ TEST ITEM B could mean two things:\n1. 2 for $98.00 (keeps the deal)\n2. $98.00 each\nWhich one do you want?");
+        Assert.Equal(2, c.Count);
+        Assert.Equal(2, ChoiceParser.Parse("I found these:\n1. LAYS A, UPC 1, $1\n2. LAYS B, UPC 2, $2").Count);
     }
 }
 
