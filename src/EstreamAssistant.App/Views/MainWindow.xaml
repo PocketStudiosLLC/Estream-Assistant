@@ -36,7 +36,7 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock x:Name="BubbleText" Text="{Binding Text}" TextWrapping="Wrap" FontSize="16" />
+                    <TextBox x:Name="BubbleText" Text="{Binding Text, Mode=OneWay}" Style="{StaticResource SelectableText}" FontSize="16" />
                     <TextBlock Text="{Binding Status}" FontSize="13" FontStyle="Italic" Foreground="{StaticResource Muted}" Margin="0,2,0,0"
                                Visibility="{Binding HasStatus, Converter={StaticResource Visible}}" />
                     <ItemsControl ItemsSource="{Binding Choices}" Margin="0,6,0,0"
@@ -186,6 +186,8 @@
                                 <DockPanel Margin="2,6,0,0">
                                     <Button DockPanel.Dock="Right" Content="New chat" Command="{Binding NewChatCommand}" Padding="10,3"
                                             ToolTip="Start over: Claude forgets the earlier messages" />
+                                    <Button DockPanel.Dock="Right" Content="Copy chat" Command="{Binding CopyChatCommand}" Padding="10,3" Margin="0,0,6,0"
+                                            ToolTip="Copy the whole chat to the clipboard, e.g. to paste into a problem report" />
                                     <TextBlock Text="{Binding UsageText}" FontSize="12" Foreground="{StaticResource Muted}" VerticalAlignment="Center"
                                                ToolTip="An estimate from token counts. The Anthropic Console has the real bill." />
                                 </DockPanel>

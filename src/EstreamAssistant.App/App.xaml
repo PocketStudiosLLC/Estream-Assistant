@@ -177,6 +177,27 @@
             <Setter Property="Template" Value="{StaticResource InputTemplate}" />
         </Style>
 
+        <!-- Read-only text that looks like a TextBlock but can be selected and copied (chat bubbles).
+             The host is a Decorator, not a ScrollViewer, so the mouse wheel still scrolls the chat. -->
+        <Style x:Key="SelectableText" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="IsReadOnlyCaretVisible" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="{StaticResource Text}" />
+            <Setter Property="SelectionBrush" Value="{StaticResource Accent}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Decorator x:Name="PART_ContentHost" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="PasswordBox">
             <Setter Property="Padding" Value="6,5" />
             <Setter Property="Foreground" Value="{StaticResource Text}" />

@@ -79,6 +79,11 @@ rewritten until Save, GM note on 1 × 1 items, double full stop, 12-digit barcod
 - [ ] 12-digit barcodes on stock sheets: does eStream's import find them as 11 digits (drop the check digit)? 12,046
       items have one. Needs a test item with a 12-digit barcode, or the owner's OK on one real item.
 
+## v0.1.10: owner feedback
+- [ ] Select and copy text in a chat message; Copy chat pastes the whole chat; mouse wheel still scrolls the chat.
+- [ ] Claude's replies are short ("Scan the POPCORN 220 g barcode."), still with Now → New and the SAVE reminder.
+- [ ] Owner's problem "sometimes when adding an item": get the copied chat (Copy chat) or that day's app log.
+
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).
 - [x] Publish-EsStockSheet.ps1 RESULT line + exit 1, Invoke-EsCsv.ps1 moving Inbox files (done on the store PC in

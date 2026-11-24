@@ -491,6 +491,42 @@ public sealed partial class MainViewModel : ObservableObject
         FocusChatBoxRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Copies the whole feed as plain text (for problem reports). Single messages can be selected and copied too.</summary>
+    [RelayCommand]
+    private void CopyChat()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"eStream Assistant {AppVersion.Display}, chat copied {DateTime.Now:yyyy-MM-dd h:mm tt}");
+        foreach (var m in Feed)
+        {
+            var who = m.Kind switch
+            {
+                FeedKind.Owner => "You",
+                FeedKind.Assistant => "Claude",
+                FeedKind.Error => "Error",
+                _ => "App",
+            };
+            sb.AppendLine();
+            sb.Append($"[{m.TimeText}] {who}:");
+            if (m.Attachments.Count > 0) sb.Append($" (attached: {string.Join(", ", m.Attachments.Select(a => a.Name))})");
+            sb.AppendLine();
+            if (m.Text.Length > 0) sb.AppendLine(m.Text.TrimEnd());
+            if (m.Status.Length > 0) sb.AppendLine($"({m.Status})");
+            foreach (var c in m.Choices)
+                sb.AppendLine(c.Detail.Length > 0 ? $"  {c.Number}. {c.Label} ({c.Detail})" : $"  {c.Number}. {c.Label}");
+        }
+        try
+        {
+            System.Windows.Clipboard.SetText(sb.ToString());
+            Add(FeedKind.App, "Chat copied. Paste it with Ctrl+V.");
+        }
+        catch (System.Runtime.InteropServices.ExternalException ex)
+        {
+            _log.Error("Copy chat failed", ex);
+            Add(FeedKind.Error, "Couldn't copy: another program is using the clipboard. Try again.");
+        }
+    }
+
     // Spec 7.4: suggest a new chat once a chat gets long (every request re-sends the whole chat).
     private int _chatTurns;
     private bool _longChatOffered;
