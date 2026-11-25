@@ -98,6 +98,8 @@ public sealed partial class ReportsViewModel : ObservableObject
     private ReportChoice _selectedChoice;
 
     [ObservableProperty] private bool _includeInactive;
+    /// <summary>"Colors": stock counts get a red (below 0), yellow (0 to 3) or green (4 and up) background.</summary>
+    [ObservableProperty] private bool _showColors;
     [ObservableProperty] private bool _includeClosed;
     /// <summary>Optional sheet number; blank lists the sheets.</summary>
     [ObservableProperty] private string _sheetText = "";
@@ -370,6 +372,7 @@ public sealed partial class ReportsViewModel : ObservableObject
         if (_eStreamLabels is null) return;
         var run = await Task.Run(() => _eStreamLabels.QueueAsync());
         Status = run.Message;
+        if (!run.Ok) _log.Issues?.Add("Queue labels in eStream", run.Message);
         QueueLabelsCommand.NotifyCanExecuteChanged();
     }
 

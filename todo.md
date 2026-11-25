@@ -84,6 +84,12 @@ rewritten until Save, GM note on 1 × 1 items, double full stop, 12-digit barcod
 - [ ] Claude's replies are short ("Scan the POPCORN 220 g barcode."), still with Now → New and the SAVE reminder.
 - [ ] Owner's problem "sometimes when adding an item": get the copied chat (Copy chat) or that day's app log.
 
+## v0.1.11: owner feedback
+- [ ] Tabs in the new order; History still reloads when opened; scans still count on the Stock counts tab.
+- [ ] Pending changes: Run button, and the Run/SAVE explanation under the empty-list text.
+- [ ] Bugs button: a failed lookup or dry run shows up with "Bugs (n)"; Open file location selects issues.txt.
+- [ ] Reports > Colors: red / yellow / green on On hand (and System/Counted on a stock sheet).
+
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).
 - [x] Publish-EsStockSheet.ps1 RESULT line + exit 1, Invoke-EsCsv.ps1 moving Inbox files (done on the store PC in

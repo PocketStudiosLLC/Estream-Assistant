@@ -17,7 +17,9 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm;
     private readonly ScanDetector _scanner;
     private readonly DispatcherTimer _eStreamTimer;
-    private const int CountsTab = 2;
+    // Tab order: Assistant, Stock counts, Reports, History, Settings.
+    private const int CountsTab = 1;
+    private const int HistoryTab = 3;
 
     public MainWindow(MainViewModel vm, AppSettings settings)
     {
@@ -42,7 +44,7 @@ public partial class MainWindow : Window
         vm.RunFinished += async (_, _) => { if (vm.History is not null) await vm.History.Refresh(); };
         Tabs.SelectionChanged += async (_, e) =>
         {
-            if (e.Source == Tabs && Tabs.SelectedIndex == 1 && vm.History is not null) await vm.History.Refresh();
+            if (e.Source == Tabs && Tabs.SelectedIndex == HistoryTab && vm.History is not null) await vm.History.Refresh();
         };
         if (vm.Counts is { } counts)
         {
@@ -134,6 +136,22 @@ public partial class MainWindow : Window
         }
         if (col.Caption is "Description" or "Comment" or "Note")
             tc.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
+        if (kind == Core.Reports.ReportColumnKind.Number && Core.Reports.StockColors.IsCountColumn(col.Caption))
+            tc.CellStyle = StockCountCellStyle(e.PropertyName);
+    }
+
+    /// <summary>Reports > Colors: the cell background follows the count (red / yellow / green) while Colors is on.</summary>
+    private Style StockCountCellStyle(string column)
+    {
+        var colors = new System.Windows.Data.MultiBinding { Converter = new Converters.StockCountBrushConverter() };
+        colors.Bindings.Add(new System.Windows.Data.Binding(column));
+        colors.Bindings.Add(new System.Windows.Data.Binding("DataContext.ShowColors")
+        {
+            RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.FindAncestor, typeof(DataGrid), 1),
+        });
+        var style = new Style(typeof(DataGridCell), ReportGrid.CellStyle);
+        style.Setters.Add(new Setter(Control.BackgroundProperty, colors));
+        return style;
     }
 
     private const string DropHint = "Drop a receipt photo or PDF here, or paste it (Ctrl+V)";
@@ -294,6 +312,19 @@ public partial class MainWindow : Window
     }
 
     private void Help_Click(object sender, RoutedEventArgs e) => ShowHelp();
+
+    /// <summary>The "Bugs" window: problems the app ran into, from issues.txt.</summary>
+    private void Bugs_Click(object sender, RoutedEventArgs e) => ShowBugs();
+
+    public void ShowBugs()
+    {
+        if (_vm.Issues is not { } issues)
+        {
+            MessageBox.Show(this, "The bug list isn't available.", "eStream Assistant", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        new BugsWindow(issues) { Owner = this }.ShowDialog();
+    }
 
     /// <summary>The "?" guide. Clicking an example puts it in the chat box on the Assistant tab (not sent).</summary>
     private void ShowHelp()

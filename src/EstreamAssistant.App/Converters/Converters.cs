@@ -41,3 +41,34 @@ public sealed class BoolToVisibilityConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>
+/// Reports > Colors: [0] a stock count, [1] whether Colors is on. Red below 0, yellow under 4,
+/// green 4 and up; no colour when Colors is off or the cell is empty.
+/// </summary>
+public sealed class StockCountBrushConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (values.Length < 2 || values[1] is not true) return DependencyProperty.UnsetValue;
+        decimal? count = values[0] switch
+        {
+            decimal d => d,
+            int i => i,
+            long l => l,
+            double x => (decimal)x,
+            _ => null,
+        };
+        if (count is null) return DependencyProperty.UnsetValue;
+        var key = Core.Reports.StockColors.For(count.Value) switch
+        {
+            Core.Reports.StockColor.Negative => "StockNegativeBg",
+            Core.Reports.StockColor.Low => "StockLowBg",
+            _ => "StockOkBg",
+        };
+        return Application.Current?.TryFindResource(key) ?? DependencyProperty.UnsetValue;
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

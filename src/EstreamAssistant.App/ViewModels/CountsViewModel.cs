@@ -191,6 +191,7 @@ public sealed partial class CountsViewModel : ObservableObject
         var run = await Task.Run(() => _counts.CheckAsync());
         Status = run.Message;
         CheckOutput = run.Output.Trim();
+        ReportIssue("Stock sheet check", run);
     }
 
     [RelayCommand(CanExecute = nameof(HasRowsAndIdle))]
@@ -199,6 +200,7 @@ public sealed partial class CountsViewModel : ObservableObject
         var run = await Task.Run(() => _counts.CreateSheetAsync(null, Comment));
         Status = run.Message;
         CheckOutput = run.Output.Trim();
+        ReportIssue("Make stock sheet", run);
         if (run.Ok) Comment = "";
     }
 
@@ -221,7 +223,7 @@ public sealed partial class CountsViewModel : ObservableObject
 
         var check = await Task.Run(() => _counts.PostDryRunAsync(id));
         CheckOutput = check.Output.Trim();
-        if (!check.Ok) { Status = "Post check failed: " + check.Message; return; }
+        if (!check.Ok) { Status = "Post check failed: " + check.Message; ReportIssue($"Post check, sheet {id}", check); return; }
 
         var lines = check.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(400).ToList();
         var intro = (_counts.IsMock
@@ -235,6 +237,13 @@ public sealed partial class CountsViewModel : ObservableObject
         var run = await Task.Run(() => _counts.PostAsync(id, typed, dryRunPassed: true));
         Status = run.Message;
         CheckOutput = run.Output.Trim();
+        ReportIssue($"Post sheet {id}", run);
+    }
+
+    /// <summary>A failed engine run goes on the Bugs list, with the script output.</summary>
+    private void ReportIssue(string task, Core.Counts.SheetRun run)
+    {
+        if (!run.Ok) _log.Issues?.Add(task, run.Message, run.Output);
     }
 
     private bool ConfirmCreate(IReadOnlyList<CountRow> rows, string comment, IReadOnlyList<string> warnings)

@@ -29,8 +29,9 @@ public partial class HelpWindow : Window
         new("Work out a price",
             "Claude does markup and margin math for you, and can round to your price endings (set in Settings).",
             ["What should I charge with a 30% markup on a $4.29 cost?", "Price Doritos at a 35% margin"]),
-        new("Dry run",
-            "Before saving, a dry run types the changes into eStream to check they'd work, then throws them away. " +
+        new("Run (a dry run)",
+            "The Run button under Pending changes types the changes into eStream to check they'd work, then throws them away: nothing is saved. " +
+            "SAVE does the same check by itself, then asks you before putting the changes in eStream. " +
             "Don't touch the mouse or keyboard while it runs.",
             ["Do a dry run of the pending changes"]),
         new("Receipts and invoices",
@@ -52,7 +53,8 @@ public partial class HelpWindow : Window
             "List eStream's deposit and levy codes with their amounts.",
             ["What are the deposit codes?"]),
         new("History and settings",
-            "The History tab shows what was saved and when. Settings has your API key, price endings, the Claude models and the name refresh. " +
+            "The History tab shows what was saved and when. The Bugs button at the top right lists problems the app ran into, " +
+            "and opens the issues.txt file to send in. Settings has your API key, price endings, the Claude models and the name refresh. " +
             "\"New chat\" starts over when Claude gets mixed up.",
             []),
     ];

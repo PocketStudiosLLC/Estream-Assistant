@@ -53,7 +53,16 @@ public sealed partial class MainViewModel : ObservableObject
         usage.Changed += (_, _) => System.Windows.Application.Current?.Dispatcher.BeginInvoke(UpdateUsageText);
         UpdateClaudeStatus();
         UpdateUsageText();
+        if (log.Issues is { } issues) issues.Changed += (_, _) => OnUi(() => OnPropertyChanged(nameof(BugsText)));
     }
+
+    // ------------------------------------------------------- bugs list
+
+    /// <summary>Problems the app ran into while doing a task (the "Bugs" button).</summary>
+    public IssueLog? Issues => _log.Issues;
+
+    /// <summary>"Bugs", or "Bugs (3)" when there are new ones since the owner last looked.</summary>
+    public string BugsText => Issues is { UnseenCount: > 0 } i ? $"Bugs ({i.UnseenCount})" : "Bugs";
 
     // ------------------------------------------------------- pending changes
 
@@ -611,7 +620,11 @@ public sealed partial class MainViewModel : ObservableObject
                 bubble.Choices = choices;
                 _activeChoices = choices;
             }
-            if (result.Refused && Feed.IndexOf(bubble) is var bi and >= 0) Feed[bi] = Replace(bubble, FeedKind.Error);
+            if (result.Refused && Feed.IndexOf(bubble) is var bi and >= 0)
+            {
+                Feed[bi] = Replace(bubble, FeedKind.Error);
+                _log.Issues?.Add("Claude", "Claude declined the request: " + bubble.Text);
+            }
             ClaudeStatus = StatusLevel.Ok;
             ClaudeStatusText = $"Connected. {ModelSummary}.";
         }
@@ -840,6 +853,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void Add(FeedKind kind, string text, IReadOnlyList<FeedChoice>? choices = null)
     {
+        if (kind == FeedKind.Error) _log.Issues?.Add("Assistant", text);
         Feed.Add(new FeedMessage(kind, text, choices));
         while (Feed.Count > 500) Feed.RemoveAt(0);
     }

@@ -35,7 +35,7 @@ public partial class App : Application
 
         var paths = new AppPaths();
         paths.EnsureCreated();
-        _log = new AppLog(paths.LogsFolder);
+        _log = new AppLog(paths.LogsFolder) { Issues = new IssueLog(paths.IssuesFile) };
         _log.Info($"Starting eStream Assistant {AppVersion.Display}");
 
         DispatcherUnhandledException += OnUnhandledException;
@@ -284,6 +284,15 @@ public partial class App : Application
                     }) ?? rv.Choices[0];
                     rv.SheetText = "";
                     await rv.RunCommand.ExecuteAsync(null);
+                    break;
+                case "--colors":
+                    i--; // flag without a value
+                    vm.Reports!.ShowColors = true;
+                    break;
+                case "--bugs":
+                    // --bugs "message": adds a demo problem to the Bugs list, then opens the window.
+                    vm.Issues?.Add("Demo", value);
+                    window.Dispatcher.InvokeAsync(() => window.ShowBugs());
                     break;
                 case "--tab" when int.TryParse(value, out var tab):
                     window.Tabs.SelectedIndex = tab;

@@ -128,6 +128,47 @@
             </Style.Triggers>
         </Style>
 
+        <!-- On/off button (Reports > Colors): grey when off, blue when on. -->
+        <Style x:Key="ColorsToggle" TargetType="ToggleButton">
+            <Setter Property="Padding" Value="14,6" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{StaticResource Text}" />
+            <Setter Property="Background" Value="{StaticResource ButtonBg}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid>
+                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="1" CornerRadius="5" />
+                            <Border x:Name="Overlay" Background="White" Opacity="0" CornerRadius="5" />
+                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Overlay" Property="Opacity" Value="0.08" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource AccentText}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter Property="Background" Value="{StaticResource Accent}" />
+                                <Setter Property="Foreground" Value="White" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Reports > Colors: stock count backgrounds (light text stays readable on all three). -->
+        <SolidColorBrush x:Key="StockNegativeBg" Color="#8E3434" />
+        <SolidColorBrush x:Key="StockLowBg" Color="#7D6A1C" />
+        <SolidColorBrush x:Key="StockOkBg" Color="#2F6E40" />
+
         <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="{StaticResource Accent}" />
             <Setter Property="Foreground" Value="White" />

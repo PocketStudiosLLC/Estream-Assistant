@@ -19,10 +19,22 @@ public sealed class AppLog
 
     public string CurrentFile => Path.Combine(_folder, $"app-{DateTime.Now:yyyy-MM-dd}.log");
 
+    /// <summary>The Bugs list: warnings and errors also go there (set at startup).</summary>
+    public IssueLog? Issues { get; set; }
+
     public void Info(string message) => Write("INFO", message);
-    public void Warn(string message) => Write("WARN", message);
-    public void Error(string message, Exception? ex = null) =>
+
+    public void Warn(string message)
+    {
+        Write("WARN", message);
+        Issues?.Add("Warning", message);
+    }
+
+    public void Error(string message, Exception? ex = null)
+    {
         Write("ERROR", ex is null ? message : $"{message}: {ex}");
+        Issues?.Add("Error", ex is null ? message : $"{message}: {ex.Message}", ex?.ToString());
+    }
 
     private void Write(string level, string message)
     {

@@ -25,15 +25,15 @@ tools/run-in-wine.sh                      # just open it
 tools/run-in-wine.sh --search "lays cucumber" --pick 2 --scan 060410079591 --tab 4
 tools/run-in-wine.sh --demo-chat --chat "lays cucumber" --choose 2
 tools/run-in-wine.sh --stage "060410079591:price=4.79,max=30" --stage "60410079966:price=9.99" --dryrun
-tools/run-in-wine.sh --mock-unverified 60410079966 --stage "060410079591:price=4.79" --stage "60410079966:price=4.49" --dryrun --save --tab 1
-tools/run-in-wine.sh --tab 2 --count 060410079591=10 --count 4011=25 --make-sheet "Chips aisle" --post-first
-tools/run-in-wine.sh --demo-chat --chat "which items have negative stock?" --report 9002 --tab 3
+tools/run-in-wine.sh --mock-unverified 60410079966 --stage "060410079591:price=4.79" --stage "60410079966:price=4.49" --dryrun --save --tab 3
+tools/run-in-wine.sh --tab 1 --count 060410079591=10 --count 4011=25 --make-sheet "Chips aisle" --post-first
+tools/run-in-wine.sh --demo-chat --chat "which items have negative stock?" --report 9002 --tab 2
 tools/run-in-wine.sh --demo-chat --attach 'Z:\path\to\invoice.jpg' --send --chat "30% markup on the chips" --pick-line 2 --stage-receipt
 ```
 
 The `--search`, `--pick`, `--scan`, `--chat`, `--choose`, `--stage`, `--dryrun`, `--save` (auto-confirms), `--save-dialog`,
 `--mock-unverified`, `--mock-fail`, `--count`, `--make-sheet` (auto-confirms), `--post-first` (opens the real
-post dialog), `--attach`, `--send`, `--pick-line`, `--stage-receipt`, `--report` (negative, zero, below_min, above_max, sheets or a sheet number), `--edit` and `--tab` options are for demos only: they feed
+post dialog), `--attach`, `--send`, `--pick-line`, `--stage-receipt`, `--report` (negative, zero, below_min, above_max, sheets or a sheet number), `--edit`, `--colors`, `--bugs "message"` and `--tab` options are for demos only: they feed
 input to the app after it starts. `--demo-chat` swaps Claude for a scripted stand-in that uses the real
 read-only tools, so the chat can be checked without an API key or any cost. Wine is fine for checking layout,
 but focus handling and scanner timing need a real Windows PC.

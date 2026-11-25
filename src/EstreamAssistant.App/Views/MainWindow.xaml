@@ -115,6 +115,8 @@
                     </StackPanel>
                     <Button Content="?" Click="Help_Click" FontSize="20" FontWeight="Bold" MinWidth="42" MinHeight="42" Padding="0"
                             Margin="12,0,0,0" ToolTip="How to use eStream Assistant (F1)" />
+                    <Button x:Name="BugsButton" Content="{Binding BugsText}" Click="Bugs_Click" FontSize="15" FontWeight="SemiBold" MinHeight="42" Padding="12,0"
+                            Margin="8,0,0,0" ToolTip="Errors and problems eStream Assistant ran into while doing a task" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -459,7 +461,7 @@
                             <DockPanel>
                                 <DockPanel DockPanel.Dock="Top">
                                     <TextBlock Text="{Binding PendingRows.Count, StringFormat=PENDING CHANGES ({0})}" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="{Binding ExecutorName, StringFormat=Dry runs: {0}}" FontSize="12" Foreground="{StaticResource Muted}"
+                                    <TextBlock Text="{Binding ExecutorName, StringFormat=Engine: {0}}" FontSize="12" Foreground="{StaticResource Muted}"
                                                HorizontalAlignment="Right" VerticalAlignment="Top" />
                                 </DockPanel>
                                 <StackPanel DockPanel.Dock="Bottom">
@@ -468,18 +470,24 @@
                                         <TextBlock Text="{Binding DryRunSummary}" TextWrapping="Wrap" />
                                     </DockPanel>
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                        <Button Content="Dry run" Style="{StaticResource PrimaryButton}" Command="{Binding DryRunCommand}"
-                                                ToolTip="Optional: check the list in eStream without saving. SAVE does this check by itself." />
+                                        <Button Content="Run" Style="{StaticResource PrimaryButton}" Command="{Binding DryRunCommand}"
+                                                ToolTip="Optional: check the list in eStream without saving anything. SAVE does this check by itself." />
                                         <Button Content="SAVE" Style="{StaticResource SaveButton}" Command="{Binding SaveCommand}"
                                                 ToolTipService.ShowOnDisabled="True" ToolTip="{Binding SaveToolTip}" />
                                         <Button Content="Clear" Command="{Binding ClearPendingCommand}" />
                                     </StackPanel>
                                 </StackPanel>
                                 <Grid>
-                                    <TextBlock Text="No changes yet. Ask Claude, or press Change on the item card. Changes show here as Now → New, ready for a dry run."
-                                               Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center"
-                                               HorizontalAlignment="Center" TextAlignment="Center" Margin="20"
-                                               Visibility="{Binding HasPending, Converter={StaticResource Hidden}}" />
+                                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="20"
+                                                Visibility="{Binding HasPending, Converter={StaticResource Hidden}}">
+                                        <TextBlock Text="No changes yet. Ask Claude, or press Change on the item card. Changes show here as Now → New."
+                                                   Foreground="{StaticResource Muted}" TextWrapping="Wrap" TextAlignment="Center" />
+                                        <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" TextAlignment="Center" FontSize="13" Margin="0,10,0,0">
+                                            <Run FontWeight="SemiBold" Text="Run" /> checks every change in eStream (a dry run), then throws it away: nothing is saved.
+                                            <LineBreak />
+                                            <Run FontWeight="SemiBold" Text="SAVE" /> does the same check by itself, shows you the list, and only after you confirm puts the changes in eStream.
+                                        </TextBlock>
+                                    </StackPanel>
                                     <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding HasPending, Converter={StaticResource Visible}}">
                                         <ItemsControl ItemsSource="{Binding PendingRows}">
                                             <ItemsControl.ItemTemplate>
@@ -533,120 +541,6 @@
                             </DockPanel>
                         </Border>
                     </Grid>
-                </Grid>
-            </TabItem>
-
-            <!-- ===================== HISTORY ===================== -->
-            <TabItem Header="  History  ">
-                <Grid Margin="6" DataContext="{Binding History}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="5*" />
-                        <ColumnDefinition Width="6*" />
-                    </Grid.ColumnDefinitions>
-                    <Border Style="{StaticResource Card}">
-                        <DockPanel>
-                            <TextBlock DockPanel.Dock="Top" Text="PAST RUNS" Style="{StaticResource SectionTitle}" />
-                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                                <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" Padding="10,3" />
-                                <CheckBox DockPanel.Dock="Right" Content="Dry runs" IsChecked="{Binding ShowDryRuns}" VerticalAlignment="Center"
-                                          Foreground="{StaticResource Text}" Margin="8,0" />
-                                <Grid>
-                                    <TextBox x:Name="HistoryFilter" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" MinHeight="34"
-                                             ToolTip="Filter by UPC, item name, status or text" />
-                                    <TextBlock Text="Filter: UPC, name, status…" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False"
-                                               Foreground="{StaticResource Placeholder}"
-                                               Visibility="{Binding Text, ElementName=HistoryFilter, Converter={StaticResource Hidden}}" />
-                                </Grid>
-                            </DockPanel>
-                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
-                                <ComboBox ItemsSource="{Binding Periods}" SelectedItem="{Binding Period}" DisplayMemberPath="Label" MinWidth="150" Margin="0,0,8,0"
-                                          ToolTip="Show runs from this time" />
-                                <ComboBox ItemsSource="{Binding Statuses}" SelectedItem="{Binding Status}" DisplayMemberPath="Label" MinWidth="170"
-                                          ToolTip="Show only runs where everything went through, or only runs with a problem" />
-                            </StackPanel>
-                            <TextBlock DockPanel.Dock="Bottom" Text="{Binding CountText}" FontSize="12" Foreground="{StaticResource Muted}" Margin="2,6,0,0" />
-                            <ListBox ItemsSource="{Binding Runs}" SelectedItem="{Binding Selected}" Background="Transparent" BorderThickness="0"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="Foreground" Value="{StaticResource Text}" />
-                                        <Setter Property="Padding" Value="8,6" />
-                                        <Setter Property="Template">
-                                            <Setter.Value>
-                                                <ControlTemplate TargetType="ListBoxItem">
-                                                    <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}" Margin="0,1">
-                                                        <ContentPresenter />
-                                                    </Border>
-                                                    <ControlTemplate.Triggers>
-                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource ButtonBg}" />
-                                                        </Trigger>
-                                                        <Trigger Property="IsSelected" Value="True">
-                                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource OwnerBubble}" />
-                                                        </Trigger>
-                                                    </ControlTemplate.Triggers>
-                                                </ControlTemplate>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel>
-                                            <DockPanel>
-                                                <TextBlock DockPanel.Dock="Right" Text="{Binding Time, StringFormat={}{0:MMM d, h:mm tt}}" Foreground="{StaticResource Muted}" FontSize="13" />
-                                                <TextBlock x:Name="Kind" Text="{Binding Kind}" FontWeight="SemiBold" />
-                                            </DockPanel>
-                                            <TextBlock Text="{Binding Summary}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
-                                        </StackPanel>
-                                        <DataTemplate.Triggers>
-                                            <DataTrigger Binding="{Binding IsDryRun}" Value="False">
-                                                <Setter TargetName="Kind" Property="Foreground" Value="{StaticResource AccentText}" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding IsInterrupted}" Value="True">
-                                                <Setter TargetName="Kind" Property="Foreground" Value="{StaticResource Warning}" />
-                                            </DataTrigger>
-                                        </DataTemplate.Triggers>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </DockPanel>
-                    </Border>
-                    <Border Grid.Column="1" Style="{StaticResource Card}">
-                        <DockPanel DataContext="{Binding Selected}">
-                            <StackPanel DockPanel.Dock="Top">
-                                <TextBlock Text="RUN DETAILS" Style="{StaticResource SectionTitle}" />
-                                <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                <TextBlock Text="{Binding Path}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
-                                <TextBlock Text="{Binding Problem}" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="0,6,0,0"
-                                           Visibility="{Binding Problem, Converter={StaticResource Visible}}" />
-                            </StackPanel>
-                            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
-                                <TextBlock Text="LOG LINES" Style="{StaticResource SectionTitle}" />
-                                <TextBox Text="{Binding DataContext.History.LogExcerpt, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
-                                         IsReadOnly="True" FontSize="12" Height="120" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
-                            </StackPanel>
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
-                                <ItemsControl ItemsSource="{Binding Rows}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="2,6">
-                                                <StackPanel>
-                                                    <DockPanel>
-                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding Status}" FontWeight="SemiBold" Foreground="{StaticResource AccentText}" />
-                                                        <TextBlock Text="{Binding Description}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                    </DockPanel>
-                                                    <TextBlock Text="{Binding Upc, StringFormat=UPC {0}}" FontSize="12" Foreground="{StaticResource Muted}" />
-                                                    <TextBlock Text="{Binding Changes}" TextWrapping="Wrap" />
-                                                    <TextBlock Text="{Binding Message}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
-                        </DockPanel>
-                    </Border>
                 </Grid>
             </TabItem>
 
@@ -820,6 +714,8 @@
                             </DockPanel>
                             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                 <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" DisplayMemberPath="Label" MinWidth="200" Margin="0,0,10,4" />
+                                <ToggleButton Content="Colors" IsChecked="{Binding ShowColors}" MinWidth="80" Margin="0,0,10,4" Style="{StaticResource ColorsToggle}"
+                                              ToolTip="Color the stock counts: red below 0, yellow under 4, green 4 and up" />
                                 <CheckBox Content="Include inactive items" IsChecked="{Binding IncludeInactive}" VerticalAlignment="Center" Margin="0,0,14,4"
                                           Foreground="{StaticResource Text}" Visibility="{Binding IsStockChoice, Converter={StaticResource Visible}}" />
                                 <Grid Width="140" Margin="0,0,10,4" Visibility="{Binding IsSheetChoice, Converter={StaticResource Visible}}">
@@ -910,6 +806,120 @@
                                     </Style>
                                 </DataGrid.CellStyle>
                             </DataGrid>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ===================== HISTORY ===================== -->
+            <TabItem Header="  History  ">
+                <Grid Margin="6" DataContext="{Binding History}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="5*" />
+                        <ColumnDefinition Width="6*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource Card}">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="PAST RUNS" Style="{StaticResource SectionTitle}" />
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" Padding="10,3" />
+                                <CheckBox DockPanel.Dock="Right" Content="Dry runs" IsChecked="{Binding ShowDryRuns}" VerticalAlignment="Center"
+                                          Foreground="{StaticResource Text}" Margin="8,0" />
+                                <Grid>
+                                    <TextBox x:Name="HistoryFilter" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" MinHeight="34"
+                                             ToolTip="Filter by UPC, item name, status or text" />
+                                    <TextBlock Text="Filter: UPC, name, status…" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                                               Foreground="{StaticResource Placeholder}"
+                                               Visibility="{Binding Text, ElementName=HistoryFilter, Converter={StaticResource Hidden}}" />
+                                </Grid>
+                            </DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                                <ComboBox ItemsSource="{Binding Periods}" SelectedItem="{Binding Period}" DisplayMemberPath="Label" MinWidth="150" Margin="0,0,8,0"
+                                          ToolTip="Show runs from this time" />
+                                <ComboBox ItemsSource="{Binding Statuses}" SelectedItem="{Binding Status}" DisplayMemberPath="Label" MinWidth="170"
+                                          ToolTip="Show only runs where everything went through, or only runs with a problem" />
+                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Bottom" Text="{Binding CountText}" FontSize="12" Foreground="{StaticResource Muted}" Margin="2,6,0,0" />
+                            <ListBox ItemsSource="{Binding Runs}" SelectedItem="{Binding Selected}" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Foreground" Value="{StaticResource Text}" />
+                                        <Setter Property="Padding" Value="8,6" />
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ListBoxItem">
+                                                    <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}" Margin="0,1">
+                                                        <ContentPresenter />
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource ButtonBg}" />
+                                                        </Trigger>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource OwnerBubble}" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel>
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Right" Text="{Binding Time, StringFormat={}{0:MMM d, h:mm tt}}" Foreground="{StaticResource Muted}" FontSize="13" />
+                                                <TextBlock x:Name="Kind" Text="{Binding Kind}" FontWeight="SemiBold" />
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding Summary}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
+                                        </StackPanel>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsDryRun}" Value="False">
+                                                <Setter TargetName="Kind" Property="Foreground" Value="{StaticResource AccentText}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsInterrupted}" Value="True">
+                                                <Setter TargetName="Kind" Property="Foreground" Value="{StaticResource Warning}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+                    <Border Grid.Column="1" Style="{StaticResource Card}">
+                        <DockPanel DataContext="{Binding Selected}">
+                            <StackPanel DockPanel.Dock="Top">
+                                <TextBlock Text="RUN DETAILS" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Path}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Problem}" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                           Visibility="{Binding Problem, Converter={StaticResource Visible}}" />
+                            </StackPanel>
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                                <TextBlock Text="LOG LINES" Style="{StaticResource SectionTitle}" />
+                                <TextBox Text="{Binding DataContext.History.LogExcerpt, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
+                                         IsReadOnly="True" FontSize="12" Height="120" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
+                            </StackPanel>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                                <ItemsControl ItemsSource="{Binding Rows}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="2,6">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding Status}" FontWeight="SemiBold" Foreground="{StaticResource AccentText}" />
+                                                        <TextBlock Text="{Binding Description}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    </DockPanel>
+                                                    <TextBlock Text="{Binding Upc, StringFormat=UPC {0}}" FontSize="12" Foreground="{StaticResource Muted}" />
+                                                    <TextBlock Text="{Binding Changes}" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Message}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </DockPanel>
                     </Border>
                 </Grid>

@@ -13,6 +13,8 @@ public sealed class AppPaths
     public string SettingsFile => Path.Combine(Root, "settings.json");
     public string ApiKeyFile => Path.Combine(Root, "apikey.bin");
     public string LogsFolder => Path.Combine(Root, "logs");
+    /// <summary>The Bugs list: problems the app ran into while doing a task.</summary>
+    public string IssuesFile => Path.Combine(Root, "issues.txt");
     public string UsageFile => Path.Combine(Root, "usage.json");
     /// <summary>Dry-run CSVs (kept out of the engine's Inbox on purpose).</summary>
     public string RunsFolder => Path.Combine(Root, "runs");
