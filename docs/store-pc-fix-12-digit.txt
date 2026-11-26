@@ -1,0 +1,42 @@
+eStream Assistant - store PC fix: 12-digit barcodes left off stock sheets
+=========================================================================
+Give this file to Claude Code on the store PC. Start it in C:\eStreamAutomation with eStream Office open.
+
+THE PROBLEM
+eStream's stock sheet import drops every 12-digit barcode. It has happened twice:
+- test 4: MINI BELLA MUSHROOMS 771163002506 (sheet 10763)
+- 2026-11-25: G.H.CRETORS CHICAGO MIX 732494000524 and G.H.CRETORS CHEESE CORN 732494000609 (sheet 10768:
+  23 lines, expected 25)
+The .dat file had the right lines. 11- and 13-digit barcodes import fine (TEST item A 2999990000011 is 13 digits).
+Likely cause: a 12-digit number is read as a UPC-A, the check digit is dropped, and the shorter code isn't found.
+12,046 items have a 12-digit barcode, so this matters.
+
+THE FIX TO TRY: write 12-digit barcodes with a leading 0 (13 digits, the EAN-13 form of a UPC-A)
+1. Back up New-EsStockSheet.ps1 as New-EsStockSheet.ps1.bak-12digit.
+2. In step 4 ("import file in eStream's format"), replace the WriteAllText line with:
+
+  [IO.File]::WriteAllText($dat, (($items | ForEach-Object { $u = "$($_.UPC)"; if ($u.Length -eq 12) { $u = "0$u" }; "{0},{1}" -f $u, $_.Counted }) -join "`r`n") + "`r`n")
+
+   Nothing else changes. The check in step 6 compares Adjustments.Invennum with the barcode from Inventory, so it
+   still works.
+
+TEST IT (needs the owner's OK: it makes a real sheet, which is then DELETED, never posted - stock doesn't change)
+1. Make a counts CSV with TEST item A and one 12-digit item, e.g.:
+     UPC,Count
+     2999990000011,1
+     732494000524,1
+2. Run: .\New-EsStockSheet.ps1 -Path <that csv> -Comment "TEST 12-digit"
+3. PASS = exit 0, "Sheet NNNNN ready: 2 items imported". FAIL = "732494000524 missing from sheet".
+4. Either way: DELETE that sheet in eStream (Inventory > Stock Sheets > Delete Stock Sheet). Do NOT post it.
+
+IF IT FAILS
+Put the old script back from the .bak. Then try, in this order, and stop at the first that works:
+  a) The 11-digit form (drop the last digit): 73249400052
+  b) Add the 12-digit items one at a time with "Add Single List UPC" on the Build tab after the import, then set
+     their count on the Items tab.
+Delete every test sheet. Don't post any.
+
+REPORT BACK (a short text file in the hand-off folder)
+- Which fix worked (leading 0, 11 digits, Add Single, or none), with the RESULT lines.
+- The test sheet numbers, and that they were deleted.
+- If the script was changed: the new step 4 lines.

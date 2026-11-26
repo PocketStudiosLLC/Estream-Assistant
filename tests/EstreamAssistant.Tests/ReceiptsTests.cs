@@ -234,10 +234,10 @@ public class ReceiptSessionTests : IDisposable
         ]);
         Assert.Equal(ReceiptLineStatus.Check, lines[0].Status);
         Assert.Contains(lines[0].Warnings, w => w.Contains("1 pack × 1 unit"));
-        Assert.Contains(lines[1].Warnings, w => w.Contains("doesn't match the line total"));
+        Assert.Contains(lines[1].Warnings, w => w.Contains("but the line total is"));
         Assert.Contains(lines[2].Warnings, w => w.Contains("No price"));
         Assert.False(lines[2].CanStageCost);
-        Assert.Contains(lines[3].Warnings, w => w.Contains("cost changes by"));
+        Assert.Contains(lines[3].Warnings, w => w.Contains("Cost changes by"));
     }
 
     [Fact]

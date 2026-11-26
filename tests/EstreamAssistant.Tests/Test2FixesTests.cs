@@ -272,6 +272,23 @@ public sealed class Test4FixesTests : IDisposable
     }
 
     [Fact]
+    public void A_wrong_sheet_names_the_missing_items()
+    {
+        // issues.txt, 2026-11-25: sheet 10768 left out both 12-digit G.H.CRETORS barcodes.
+        var rows = new List<CountRow>
+        {
+            new(732494000524, "G.H.CRETORS CHICAGO MIX", 6, 0, 1m),
+            new(732494000609, "G.H.CRETORS CHEESE CORN", 6, 0, 1m),
+            new(60410079591, "LAYS ALL DRESS", 3, 0, 1m),
+        };
+        var msg = StockCounts.WrongSheetMessage(10768, "Making the sheet failed (exit code 1). Sheet 10768 does not match the CSV: " +
+            "sheet has 23 lines, expected 25; 732494000524 missing from sheet; 732494000609 missing from sheet", rows);
+        Assert.Equal("Sheet 10768 is wrong. DON'T post it. Missing: G.H.CRETORS CHICAGO MIX, G.H.CRETORS CHEESE CORN. " +
+                     "Delete it in eStream (Inventory > Stock Sheets), then make it again.", msg);
+        Assert.Contains("doesn't match the counts", StockCounts.WrongSheetMessage(10768, "sheet has 1 lines, expected 2", rows));
+    }
+
+    [Fact]
     public void Old_settings_files_are_rewritten_with_the_moved_values()
     {
         var path = Path.Combine(_dir.Path, "settings.json");

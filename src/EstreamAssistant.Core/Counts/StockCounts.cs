@@ -354,12 +354,7 @@ public sealed class StockCounts
         if (record.Failed)
         {
             _log?.Warn($"Stock sheet {record.SheetId} was made but is NOT right ({rows.Count} counts): {run.Message}");
-            return run with
-            {
-                Ok = false,
-                Message = $"Sheet {record.SheetId} was made in eStream but it isn't right, so DON'T post it: {run.Message.TrimEnd('.')}. " +
-                          $"Delete sheet {record.SheetId} in eStream (Inventory > Stock Sheets), then try again.",
-            };
+            return run with { Ok = false, Message = WrongSheetMessage(record.SheetId!.Value, run.Message, rows) };
         }
         _log?.Info($"Stock sheet created: {record.SheetId?.ToString() ?? "number unknown"} ({rows.Count} items, mock={record.IsMock}).");
         return run.SheetId is null
@@ -368,16 +363,29 @@ public sealed class StockCounts
     }
 
     /// <summary>
-    /// eStream's stock sheet import left out MINI BELLA MUSHROOMS 771163002506 (test 4): the only 12-digit barcode on
-    /// the sheet; 11- and 13-digit codes import fine. The script then reports the sheet as wrong. Say so up front.
+    /// eStream's stock sheet import left out every 12-digit barcode so far (test 4: MINI BELLA MUSHROOMS 771163002506;
+    /// 2026-11-25: G.H.CRETORS 732494000524 and 732494000609); 11- and 13-digit codes import fine. The store-PC script
+    /// writes them with a leading 0 from v0.1.12's fix (docs/store-pc-fix-12-digit.txt). Until that's proven, say so up front.
     /// </summary>
     internal static string? TwelveDigitWarning(IReadOnlyList<CountRow> rows)
     {
         var twelve = rows.Where(r => r.Upc.ToString(CultureInfo.InvariantCulture).Length == 12).ToList();
         if (twelve.Count == 0) return null;
-        return $"{twelve.Count} item{(twelve.Count == 1 ? " has" : "s have")} a 12-digit barcode ({string.Join(", ", twelve.Take(3).Select(r => r.Description))}" +
-               $"{(twelve.Count > 3 ? ", ..." : "")}). eStream's import has left a 12-digit barcode off a sheet before. If that happens, " +
-               "the sheet is marked NOT RIGHT: delete it in eStream and count those items on the Build tab by hand.";
+        return $"eStream may leave out 12-digit barcodes: {string.Join(", ", twelve.Take(3).Select(r => r.Description))}" +
+               $"{(twelve.Count > 3 ? $" and {twelve.Count - 3} more" : "")}. The app checks the sheet afterwards.";
+    }
+
+    /// <summary>
+    /// The owner's message for a sheet the script made but that doesn't match the counts. Names the missing items
+    /// instead of the script's "732494000524 missing from sheet" text.
+    /// </summary>
+    internal static string WrongSheetMessage(int sheetId, string scriptMessage, IReadOnlyList<CountRow> rows)
+    {
+        var missing = System.Text.RegularExpressions.Regex.Matches(scriptMessage, @"(\d{6,}) missing from sheet")
+            .Select(m => long.TryParse(m.Groups[1].Value, out var u) ? rows.FirstOrDefault(r => r.Upc == u)?.Description ?? m.Groups[1].Value : m.Groups[1].Value)
+            .ToList();
+        var why = missing.Count > 0 ? $"Missing: {string.Join(", ", missing)}." : "It doesn't match the counts.";
+        return $"Sheet {sheetId} is wrong. DON'T post it. {why} Delete it in eStream (Inventory > Stock Sheets), then make it again.";
     }
 
     /// <summary>True when a sheet with exactly these counts was made (even if its number isn't known).</summary>

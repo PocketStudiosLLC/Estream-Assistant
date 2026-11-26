@@ -238,9 +238,9 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             var name = l.Item?.Description ?? l.Input.Text;
             if (onSheet.TryGetValue(l.Number, out var sheet)) problems.Add($"Line {l.Number} ({name}) is already on stock sheet {sheet?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)"}.");
             else if (l.Status == ReceiptLineStatus.Unreadable) problems.Add($"Line {l.Number} couldn't be read.");
-            else if (l.Item is null) problems.Add($"Line {l.Number} ({name}): no eStream item picked yet.");
+            else if (l.Item is null) problems.Add($"Line {l.Number} ({name}): no item picked.");
             else if (l.Item.Inactive) problems.Add($"Line {l.Number} ({name}) is inactive.");
-            else if (l.ReceivedUnits is not > 0) problems.Add($"Line {l.Number} ({name}): no quantity{(l.Input.Qty is > 0 ? " (eStream has no case size for it)" : "")}, so nothing to add.");
+            else if (l.ReceivedUnits is not > 0) problems.Add($"Line {l.Number} ({name}): no {(l.Input.Qty is > 0 ? "case size in eStream" : "quantity")}.");
             else take.Add(l);
         }
 
@@ -280,18 +280,17 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         var comment = ("Receipt " + source).Trim();
         var notes = new List<string>
         {
-            "Receipt: each count is on hand now + the units received (a negative on hand counts as 0). " +
-            "Posting adds only the difference, so sales made in between are kept. Post it on the Stock counts tab.",
+            "Receipt: count = on hand + received (negative on hand counts as 0). Post it on the Stock counts tab.",
         };
         // Owner's rule: a negative on hand counts as 0, so posting adds MORE than was received. Fine for a fresh
         // delivery; for an old receipt those goods were probably sold already (test 3: a 4-week-old Costco receipt,
         // HALF & HALF on hand -36 + 10 received -> +46).
         var negative = rc.Rows.Where(r => r.SystemOnHand < 0).ToList();
         if (negative.Count > 0)
-            notes.Add($"{negative.Count} item{(negative.Count == 1 ? " has" : "s have")} a NEGATIVE on hand, so posting adds more than was received: " +
+            notes.Add($"NEGATIVE on hand, so posting adds more than received: " +
                 string.Join("; ", negative.Take(5).Select(r => $"{r.Description} {N(r.SystemOnHand)} → {N(r.Count)} adds {N(r.Count - r.SystemOnHand)}")) +
                 (negative.Count > 5 ? $"; and {negative.Count - 5} more" : "") +
-                ". If this receipt is old and those goods were already sold, cancel and leave those lines out.");
+                ". If those goods are already sold, cancel and leave them out.");
         notes.AddRange(rc.Problems.Select(p => "Left out: " + p));
         var run = await counts.CreateSheetAsync(rc.Rows, comment, ct, notes).ConfigureAwait(false);
         // A sheet that came out wrong doesn't count: the lines can go on a new one once it's deleted in eStream.
@@ -322,7 +321,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             {
                 Input = input,
                 Status = ReceiptLineStatus.Unreadable,
-                Warnings = ["Couldn't read this line. Check the receipt and type it in, or skip it."],
+                Warnings = ["Can't read this line. Type it in, or skip it."],
             };
 
         // F5.4: UPC first (the owner's pick, then the printed code), then the name.
@@ -355,7 +354,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             else if (hits.Count > 1)
             {
                 candidates = hits.Select(h => new ReceiptCandidate(h.Item.Upc, $"{h.Item.Description} ({h.How} {code})", 100)).ToList();
-                codeProblem = $"Code {code} matches {hits.Count} items (as a UPC or a shelf code): pick the right one.";
+                codeProblem = $"Code {code} matches {hits.Count} items. Pick one.";
             }
         }
         if (item is null && codeProblem is null && input.Text.Trim().Length > 0)
@@ -377,12 +376,12 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
                 Status = candidates.Count > 0 ? ReceiptLineStatus.NeedsChoice : ReceiptLineStatus.NoMatch,
                 Candidates = candidates,
                 Warnings = [codeProblem ?? (candidates.Count > 0
-                    ? "Not sure which item this is: pick one."
-                    : "No eStream item matches. Scan it, or add it in eStream by hand.")],
+                    ? "Pick the item."
+                    : "No match. Scan its barcode, or add it in eStream.")],
             };
 
         var warnings = new List<string>();
-        if (item.Inactive) warnings.Add("This item is INACTIVE in eStream, so it can't be changed.");
+        if (item.Inactive) warnings.Add("INACTIVE in eStream. Can't be changed.");
 
         var units = item.PacksPerCase * item.UnitsPerPack;
         decimal? unitCost = null, caseCost = null;
@@ -397,7 +396,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         {
             if (units <= 0)
             {
-                warnings.Add("eStream has no case size for this item, so the unit cost can't be worked out.");
+                warnings.Add("No case size in eStream. Unit cost unknown.");
             }
             else
             {
@@ -405,17 +404,17 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
                 caseCost = cp;
                 math = $"{Money(cp)} ÷ ({N(item.PacksPerCase)} × {N(item.UnitsPerPack)}) = {Money4(unitCost.Value)}";
                 if (units == 1)
-                    warnings.Add("eStream has 1 pack × 1 unit for this item. If it comes by the case, ask how many are in a case before using this cost.");
+                    warnings.Add("eStream has 1 pack × 1 unit. If it comes in a case, check how many are in it.");
             }
         }
         else
         {
-            warnings.Add("No price was read for this line.");
+            warnings.Add("No price read.");
         }
 
         if (input.Qty is { } q && input.LineTotal is { } total && (input.CasePrice ?? input.UnitPrice) is { } each
             && Math.Abs(q * each - total) > 0.02m)
-            warnings.Add($"Qty × price ({N(q)} × {Money(each)} = {Money(q * each)}) doesn't match the line total {Money(total)}. Check this line.");
+            warnings.Add($"{N(q)} × {Money(each)} = {Money(q * each)}, but the line total is {Money(total)}. Check it.");
 
         decimal? changePct = null, gmNow = null;
         if (unitCost is { } uc)
@@ -424,7 +423,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             {
                 changePct = Math.Round((uc - item.UnitCost) / item.UnitCost * 100m, 1);
                 if (Math.Abs(changePct.Value) > 50)
-                    warnings.Add($"The cost changes by {changePct:0.#}%. Check the case size and this line.");
+                    warnings.Add($"Cost changes by {changePct:0.#}%. Check the case size.");
             }
             if (item.Price > 0) gmNow = PricingCalculator.GrossMarginPct(item.Price / Math.Max(1, item.For), uc);
         }

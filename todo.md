@@ -1,7 +1,7 @@
 # To test
 
 Everything below is built but hasn't been tried for real yet. Most of it needs the store PC.
-`docs/test3.txt` (v0.1.7) covers the store-PC items below: Part A the v0.1.7 fixes, Part B the rest.
+The old store-PC test plans (docs/test2-5.txt) were removed in v0.1.12; their results are below.
 
 ## With a real API key
 - [ ] Settings → Test connection works.
@@ -70,14 +70,14 @@ dry run), Costco shelf-code matching, negative on-hand warning, Reports → Stoc
 Found and fixed in v0.1.9: numbered facts turned into buttons / lost, deleted sheet still listed, settings file not
 rewritten until Save, GM note on 1 × 1 items, double full stop, 12-digit barcode warning.
 
-## v0.1.9: run `docs/test5.txt` on the store PC
+## v0.1.9: still open from test 5
 - [ ] Facts lists stay as text, choices still buttons ("lays cucumber").
 - [ ] Sheet 10763 shows "deleted in eStream"; card GM note; 12-digit warning in the Costco stock sheet window.
 - [ ] Owner: pack sizes (Coke 1 × 32, cigarettes 1 × 10, concrete 1 × 56), count sheet chat question, sheet 10761,
       TEST labels ("2 for" price on the label?), HAAGEN DAZS 5 for $9.35, CUCMBER LAYS in pending batches.
 - [ ] Owner hands-on: scanner, drag and drop, phone photos, print, scaling, a real invoice.
-- [ ] 12-digit barcodes on stock sheets: does eStream's import find them as 11 digits (drop the check digit)? 12,046
-      items have one. Needs a test item with a 12-digit barcode, or the owner's OK on one real item.
+- [x] 12-digit barcodes on stock sheets: confirmed dropped by eStream's import (issues.txt 2026-11-25, sheet 10768,
+      both G.H.CRETORS items). Fix to try on the store PC: `docs/store-pc-fix-12-digit.txt`.
 
 ## v0.1.10: owner feedback
 - [ ] Select and copy text in a chat message; Copy chat pastes the whole chat; mouse wheel still scrolls the chat.
@@ -89,6 +89,12 @@ rewritten until Save, GM note on 1 × 1 items, double full stop, 12-digit barcod
 - [ ] Pending changes: Run button, and the Run/SAVE explanation under the empty-list text.
 - [ ] Bugs button: a failed lookup or dry run shows up with "Bugs (n)"; Open file location selects issues.txt.
 - [ ] Reports > Colors: red / yellow / green on On hand (and System/Counted on a stock sheet).
+
+## v0.1.12: owner feedback (issues.txt 2026-11-25)
+- [ ] Store PC: run `docs/store-pc-fix-12-digit.txt` (leading 0 on 12-digit barcodes in New-EsStockSheet.ps1).
+      Then remove the 12-digit warning (`StockCounts.TwelveDigitWarning`) if it works.
+- [ ] A wrong sheet says "Sheet N is wrong. DON'T post it. Missing: <item names>."
+- [ ] Receipt replies and line warnings are short ("Line 4: scan the POPCORN 220 g barcode.").
 
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).

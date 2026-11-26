@@ -453,8 +453,9 @@ public sealed class ToolExecutor
         return new(JsonSerializer.Serialize(new
         {
             lines = lines.Select(ReceiptLineJson),
-            next = "The table is on the owner's screen. Tell them briefly what was matched and what needs them " +
-                   "(unreadable lines, items to pick as a numbered list, warnings). Don't stage anything until they say what to do.",
+            next = "The table is on the owner's screen. Reply \"N of M lines ready.\" then one short line per line that needs them, " +
+                   "saying only what to do (e.g. \"Line 4: scan the POPCORN 220 g barcode.\"). No reasons. Items to pick as a numbered list. " +
+                   "Don't stage anything until they say what to do.",
         }, Json), false);
     }
 
