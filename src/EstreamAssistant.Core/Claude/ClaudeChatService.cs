@@ -35,6 +35,8 @@ public interface IChatService
     /// Returns true if any of them still had pictures in the chat.
     /// </summary>
     bool DropReceiptPictures(IEnumerable<ReceiptFile> files);
+    /// <summary>The [picture N] numbers a sent receipt's pictures were labelled with, in order (empty for a PDF sent whole).</summary>
+    IReadOnlyList<int> PictureNumbers(ReceiptFile file);
     void Reset();
     Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct) =>
         SendAsync(ownerText, [], progress, ct);
@@ -139,8 +141,8 @@ public sealed class ClaudeChatService : IChatService
     }
 
     internal const string PicturesRemovedNote =
-        "[receipt pictures removed to save tokens: every line of this receipt is on a posted stock sheet, or the owner finished it. " +
-        "Its lines are in the receipt table. To look at the receipt itself again, ask the owner to attach it again.]";
+        "[receipt pictures removed to save tokens: every line of this receipt is on a posted stock sheet, or the owner finished it or saved it for later. " +
+        "Its lines are in the receipt table or in search_receipts. To look at the receipt itself again, ask the owner to attach it again.]";
     internal const string PictureRemovedMark = "[picture removed]";
 
     /// <summary>
@@ -408,6 +410,17 @@ public sealed class ClaudeChatService : IChatService
     {
         var content = new List<BetaContentBlockParam>();
         var pictures = new List<(ReceiptFile, List<int>)>();
+        // Every picture gets a number for the whole app run, so Claude can say which picture a line is on.
+        string Number(ReceiptFile file)
+        {
+            var n = Interlocked.Increment(ref _pictureCount);
+            lock (_pictureNumbers)
+            {
+                if (!_pictureNumbers.TryGetValue(file, out var list)) _pictureNumbers[file] = list = [];
+                list.Add(n);
+            }
+            return $"picture {n}";
+        }
         // Receipts go first (before the text that refers to them), each with a short label.
         for (int i = 0; i < attachments.Count; i++)
         {
@@ -415,9 +428,10 @@ public sealed class ClaudeChatService : IChatService
             var head = $"[receipt attached] {a.FileName} (page {i + 1} of {attachments.Count})";
             var at = new List<int>();
             pictures.Add((a, at));
+            lock (_pictureNumbers) _pictureNumbers.Remove(a);
             if (a.Parts.Count == 0)
             {
-                content.Add(new BetaTextBlockParam { Text = head });
+                content.Add(new BetaTextBlockParam { Text = a.Kind == ReceiptKind.Image ? $"{head} [{Number(a)}]" : head });
                 at.Add(content.Count);
                 content.Add(AttachmentBlock(a));
                 continue;
@@ -425,7 +439,8 @@ public sealed class ClaudeChatService : IChatService
             content.Add(new BetaTextBlockParam { Text = a.Note.Length > 0 ? head + " " + a.Note : head });
             foreach (var part in a.Parts)
             {
-                if (part.Label.Length > 0) content.Add(new BetaTextBlockParam { Text = $"[{a.FileName}: {part.Label}]" });
+                var number = Number(a);
+                content.Add(new BetaTextBlockParam { Text = part.Label.Length > 0 ? $"[{number}: {a.FileName}, {part.Label}]" : $"[{number}: {a.FileName}]" });
                 at.Add(content.Count);
                 content.Add(ImageBlock(part.Data, part.MediaType));
             }
@@ -531,6 +546,14 @@ public sealed class ClaudeChatService : IChatService
             ChatTools.StockSheets => "Reading stock sheets…",
             _ => "Working…",
         };
+    }
+
+    private int _pictureCount;
+    private readonly Dictionary<ReceiptFile, List<int>> _pictureNumbers = [];
+
+    public IReadOnlyList<int> PictureNumbers(ReceiptFile file)
+    {
+        lock (_pictureNumbers) return _pictureNumbers.TryGetValue(file, out var list) ? list.ToList() : [];
     }
 
     private void Rollback(int snapshot)

@@ -525,12 +525,13 @@ public sealed class ClaudeChatServiceTests : IDisposable
 
         var content = Requests[0].Body.RootElement.GetProperty("messages")[0].GetProperty("content");
         Assert.Equal("[receipt attached] Superstore 1.pdf (page 1 of 1) This is a long receipt.", content[0].GetProperty("text").GetString());
-        Assert.Equal("[Superstore 1.pdf: strip 1 of 2]", content[1].GetProperty("text").GetString());
+        Assert.Equal("[picture 1: Superstore 1.pdf, strip 1 of 2]", content[1].GetProperty("text").GetString());
         Assert.Equal("image", content[2].GetProperty("type").GetString());
         Assert.Equal(Convert.ToBase64String([0xFF, 0xD8, 1]), content[2].GetProperty("source").GetProperty("data").GetString());
-        Assert.Equal("[Superstore 1.pdf: strip 2 of 2]", content[3].GetProperty("text").GetString());
+        Assert.Equal("[picture 2: Superstore 1.pdf, strip 2 of 2]", content[3].GetProperty("text").GetString());
         Assert.Equal("image", content[4].GetProperty("type").GetString());
         Assert.DoesNotContain(Enumerable.Range(0, content.GetArrayLength()), i => content[i].GetProperty("type").GetString() == "document");
+        Assert.Equal([1, 2], svc.PictureNumbers(roll));
     }
 
     [Fact]

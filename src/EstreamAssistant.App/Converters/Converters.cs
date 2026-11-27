@@ -72,3 +72,31 @@ public sealed class StockCountBrushConverter : IMultiValueConverter
     public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>Pending tab pictures: [0] the scroll viewer's width, [1] the zoom (1 = fit the width).</summary>
+public sealed class ZoomWidthConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) =>
+        values is [double width, double zoom] && width > 20 ? Math.Max(20, (width - 4) * Math.Max(1, zoom)) : double.NaN;
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>Scrolls an element into view when the bound value turns true (the row being asked about).</summary>
+public static class BringIntoView
+{
+    public static readonly DependencyProperty WhenProperty = DependencyProperty.RegisterAttached(
+        "When", typeof(bool), typeof(BringIntoView), new PropertyMetadata(false, (d, e) =>
+        {
+            if (e.NewValue is not true || d is not FrameworkElement fe) return;
+            void Show() => fe.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
+                () => fe.BringIntoView(new Rect(0, -40, fe.ActualWidth, fe.ActualHeight + 80)));
+            if (fe.IsLoaded) { Show(); return; }
+            void OnLoaded(object? s, RoutedEventArgs a) { fe.Loaded -= OnLoaded; Show(); }
+            fe.Loaded += OnLoaded;
+        }));
+
+    public static bool GetWhen(DependencyObject d) => (bool)d.GetValue(WhenProperty);
+    public static void SetWhen(DependencyObject d, bool value) => d.SetValue(WhenProperty, value);
+}

@@ -297,6 +297,23 @@ public sealed class Test4FixesTests : IDisposable
         Assert.Equal(120, s.ScriptTimeoutBaseSeconds);
         var text = File.ReadAllText(path);
         Assert.Contains("\"ScriptTimeoutBaseSeconds\": 120", text);
-        Assert.Contains("\"SettingsVersion\": 1", text);
+        Assert.Contains($"\"SettingsVersion\": {Core.Settings.AppSettings.CurrentSettingsVersion}", text);
+    }
+
+    [Fact]
+    public void An_old_opus_chat_model_moves_to_sonnet_once()
+    {
+        var path = Path.Combine(_dir.Path, "settings.json");
+        File.WriteAllText(path, """{ "SettingsVersion": 1, "Model": "claude-opus-5-5", "ReceiptModel": "claude-opus-5-5" }""");
+        var s = Core.Settings.AppSettings.Load(path);
+        Assert.Equal(("claude-sonnet-5-5", "claude-opus-5-5"), (s.Model, s.ReceiptModel));
+        Assert.Contains("\"Model\": \"claude-sonnet-5-5\"", File.ReadAllText(path));
+
+        // Picked again after the move: it stays.
+        s.Model = "claude-opus-5-5";
+        s.Save(path);
+        Assert.Equal("claude-opus-5-5", Core.Settings.AppSettings.Load(path).Model);
+        // Another model the owner chose isn't touched.
+        Assert.Equal("claude-haiku-5-5", new Core.Settings.AppSettings { Model = "claude-haiku-5-5" }.Migrate().Model);
     }
 }

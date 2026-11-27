@@ -32,6 +32,7 @@ public static class ChatTools
     public const string ItemSales = "item_sales";
     public const string ReceiptStockSheet = "receipt_stock_sheet";
     public const string QueueShelfLabels = "queue_shelf_labels";
+    public const string SavedReceipts = "search_receipts";
 
     /// <param name="Strict">false for simple read-only tools: they don't count toward the strict-schema limits,
     /// and ToolExecutor re-checks every input anyway.</param>
@@ -204,6 +205,15 @@ public static class ChatTools
             """
             {"type":"object","properties":{},"required":[],"additionalProperties":false}
             """, Strict: false),
+        new(SavedReceipts,
+            "Receipts: search the lines of receipts the owner saved for later (Pending tab) or finished before, by item words, code or UPC. " +
+            "Returns each matching line with its receipt, date, quantity, case/unit price and line total as printed, and the item it matched. " +
+            "Use it for questions about what was bought or paid, instead of asking for the receipt again. Empty text lists the saved receipts.",
+            """
+            {"type":"object","properties":{
+              "text":{"type":"string","description":"Item words, a code or a UPC, e.g. 'lays 220'; empty to list the receipts."}
+            },"required":["text"],"additionalProperties":false}
+            """, Strict: false),
         new(ShowReceiptLines,
             "Receipts: put the lines you read from the attached receipt or invoice into the owner's receipt table. " +
             "The app matches each line's code to an eStream item as a UPC AND as the store's Shelf Code (e.g. Costco item numbers), then by name and works out the unit cost itself " +
@@ -213,6 +223,8 @@ public static class ChatTools
             """
             {"type":"object","properties":{
               "source":{"type":"string","description":"Short name for the receipt, e.g. 'Pepsi invoice Nov 18'."},
+              "store":{"type":"string","description":"The store or supplier printed on the receipt, short, e.g. 'Superstore', 'Costco', 'Pepsi'; '' if not printed."},
+              "date":{"type":"string","description":"The date printed on the receipt as YYYY-MM-DD; '' if not printed or not readable."},
               "lines":{"type":"array","items":{"type":"object","properties":{
                 "line":{"type":"integer","description":"Line number on the receipt, from 1, top to bottom."},
                 "text":{"type":"string","description":"The item description exactly as printed."},
@@ -223,9 +235,12 @@ public static class ChatTools
                 "line_total":{"type":["number","null"],"description":"The line's extended total as printed, or null."},
                 "readable":{"type":"boolean","description":"false if you can't read the line's item or numbers for sure."},
                 "upc":{"type":["string","null"],"description":"The eStream UPC the owner confirmed for this line; null if not confirmed."},
-                "note":{"type":["string","null"],"description":"Anything the owner should know, e.g. 'price smudged'."}
-              },"required":["line","text","code","qty","case_price","unit_price","line_total","readable","upc","note"],"additionalProperties":false}}
-            },"required":["source","lines"],"additionalProperties":false}
+                "note":{"type":["string","null"],"description":"Anything the owner should know, e.g. 'price smudged'."},
+                "picture":{"type":"integer","description":"N of the [picture N] the line is on; 0 if not known."},
+                "top":{"type":"integer","description":"Where the line starts on that picture: percent of its height from the top, 0-100; 0 if not known."},
+                "bottom":{"type":"integer","description":"Where the line ends on that picture: percent of its height from the top, 0-100; 0 if not known."}
+              },"required":["line","text","code","qty","case_price","unit_price","line_total","readable","upc","note","picture","top","bottom"],"additionalProperties":false}}
+            },"required":["source","store","date","lines"],"additionalProperties":false}
             """),
         new(PriceReceiptLines,
             "Receipts: work out proposed selling prices for receipt table lines from their new unit cost, e.g. when the owner says " +

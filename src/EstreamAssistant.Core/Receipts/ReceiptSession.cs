@@ -28,6 +28,19 @@ public sealed record ReceiptLineInput
     /// <summary>The eStream item the owner confirmed for this line, if any.</summary>
     public string? Upc { get; init; }
     public string? Note { get; init; }
+    /// <summary>The picture the line is on, as numbered for Claude ([picture N]); 0 when not known.</summary>
+    public int Picture { get; init; }
+    /// <summary>Where the line is on that picture: percent of its height from the top (0..100). Top &lt; Bottom when known.</summary>
+    public int Top { get; init; }
+    public int Bottom { get; init; }
+    /// <summary>The owner left this line out (not on any stock sheet, no more questions).</summary>
+    public bool Skipped { get; init; }
+    /// <summary>The owner checked the line against the receipt: its warnings are answered.</summary>
+    public bool Confirmed { get; init; }
+    /// <summary>Selling units received, typed by the owner (beats cases × packs × units).</summary>
+    public decimal? Units { get; init; }
+
+    public bool HasPosition => Picture > 0 && Top >= 0 && Bottom > Top && Bottom <= 100;
 }
 
 /// <summary>How to work out a proposed price from the new unit cost.</summary>
@@ -105,18 +118,78 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
     /// <summary>Receipt lines already imported into a stock sheet (line → sheet number). Imports add up in eStream.</summary>
     private readonly Dictionary<int, int?> _onSheet = [];
 
+    /// <summary>Picture number (as labelled for Claude) → (file, picture of that file), for receipts sent in this run.</summary>
+    private readonly Dictionary<int, (int File, int Part)> _pictures = [];
+
     public event EventHandler? Changed;
 
     public string Source { get; private set; } = "";
+    /// <summary>The store or supplier printed on the receipt ("Superstore", "Costco"), as Claude read it.</summary>
+    public string Store { get; private set; } = "";
+    /// <summary>The date printed on the receipt, when Claude could read it.</summary>
+    public DateOnly? Date { get; private set; }
+    /// <summary>The receipt's name: "Superstore · Nov 25, 2026", or Claude's short name for it.</summary>
+    public string Title { get { lock (_gate) return Name.Length > 0 ? Name : ReceiptNames.Title(Store, Date, Source); } }
+    /// <summary>The owner's own name for the receipt (Pending tab); empty = store and date.</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>Store and date as printed (an empty store or a null date keeps what was there).</summary>
+    public void SetInfo(string store, DateOnly? date)
+    {
+        lock (_gate)
+        {
+            if (store.Trim().Length > 0) Store = store.Trim();
+            if (date is not null) Date = date;
+        }
+    }
     public bool IsOpen { get { lock (_gate) return _files.Count > 0 || _lines.Count > 0; } }
     public IReadOnlyList<ReceiptFile> Files { get { lock (_gate) return _files.ToList(); } }
     public IReadOnlyList<ReceiptLine> Lines { get { lock (_gate) return _lines.Values.ToList(); } }
 
     /// <summary>Receipt files the owner attached (more pages of the same receipt add to it).</summary>
-    public void AddFiles(IEnumerable<ReceiptFile> files)
+    /// <param name="pictures">For each file, the picture numbers it was labelled with for Claude (one per picture sent).</param>
+    public void AddFiles(IEnumerable<ReceiptFile> files, IReadOnlyList<IReadOnlyList<int>>? pictures = null)
     {
-        lock (_gate) _files.AddRange(files);
+        lock (_gate)
+        {
+            var list = files.ToList();
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (pictures is not null && i < pictures.Count)
+                    for (int k = 0; k < pictures[i].Count; k++) _pictures[pictures[i][k]] = (_files.Count, k);
+                _files.Add(list[i]);
+            }
+        }
         Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Which file and which of its pictures a picture number is, or null when it isn't one of this receipt's.</summary>
+    public (int File, int Part)? PictureOf(int number)
+    {
+        lock (_gate) return _pictures.TryGetValue(number, out var p) ? p : null;
+    }
+
+    /// <summary>
+    /// Opens a receipt saved for later: its lines are matched again (eStream may have changed since: an item added,
+    /// a case size fixed) and its stock sheet marks come back.
+    /// </summary>
+    public async Task RestoreAsync(string source, IReadOnlyList<ReceiptLineInput> inputs, IReadOnlyDictionary<int, int?> onSheet,
+        string store = "", DateOnly? date = null, CancellationToken ct = default)
+    {
+        SetInfo(store, date);
+        await SetLinesAsync(source, inputs, ct).ConfigureAwait(false);
+        lock (_gate) foreach (var (n, id) in onSheet) _onSheet[n] = id;
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The owner answered a question about a line: replaces its input and matches it again.</summary>
+    public async Task<ReceiptLine?> UpdateLineAsync(int lineNumber, Func<ReceiptLineInput, ReceiptLineInput> change, CancellationToken ct = default)
+    {
+        ReceiptLine? old;
+        lock (_gate) old = _lines.GetValueOrDefault(lineNumber);
+        if (old is null) return null;
+        var lines = await SetLinesAsync("", [change(old.Input) with { Line = lineNumber }], ct).ConfigureAwait(false);
+        return lines.FirstOrDefault();
     }
 
     /// <summary>Closes the receipt. Returns its files so the caller can file them in Receipts\Done.</summary>
@@ -129,7 +202,10 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             _files.Clear();
             _lines.Clear();
             _onSheet.Clear();
+            _pictures.Clear();
             Source = "";
+            Store = "";
+            Date = null;
         }
         Changed?.Invoke(this, EventArgs.Empty);
         return files;
@@ -204,7 +280,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
                     Upc = l.Item!.Upc.ToString(CultureInfo.InvariantCulture),
                     CaseCost = l.NewCaseCost,
                     Price = includePrice ? l.ProposedPrice : null,
-                    Reason = $"Receipt{(Source.Length > 0 ? " " + Source : "")}, line {n}"
+                    Reason = $"Receipt{(Title.Length > 0 ? " " + Title : "")}, line {n}"
                         + (includePrice && l.Rule is not null ? $", {l.Rule.Text}" : ""),
                 });
             }
@@ -236,7 +312,8 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         foreach (var l in lines)
         {
             var name = l.Item?.Description ?? l.Input.Text;
-            if (onSheet.TryGetValue(l.Number, out var sheet)) problems.Add($"Line {l.Number} ({name}) is already on stock sheet {sheet?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)"}.");
+            if (l.Input.Skipped) problems.Add($"Line {l.Number} ({name}) was left out by the owner.");
+            else if (onSheet.TryGetValue(l.Number, out var sheet)) problems.Add($"Line {l.Number} ({name}) is already on stock sheet {sheet?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)"}.");
             else if (l.Status == ReceiptLineStatus.Unreadable) problems.Add($"Line {l.Number} couldn't be read.");
             else if (l.Item is null) problems.Add($"Line {l.Number} ({name}): no item picked.");
             else if (l.Item.Inactive) problems.Add($"Line {l.Number} ({name}) is inactive.");
@@ -275,9 +352,8 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         var rc = await ToReceivedCountsAsync(lineNumbers, ct).ConfigureAwait(false);
         if (rc.Rows.Count == 0)
             return (new(false, "Nothing to add from this receipt. " + string.Join(" ", rc.Problems.Take(6)), ""), rc);
-        string source;
-        lock (_gate) source = Source;
-        var comment = ("Receipt " + source).Trim();
+        string comment;
+        lock (_gate) comment = ReceiptNames.SheetComment(Store, Date, Source, Name);
         var notes = new List<string>
         {
             "Receipt: count = on hand + received (negative on hand counts as 0). Post it on the Stock counts tab.",
@@ -298,7 +374,6 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         return (run, rc);
     }
 
-    /// <summary>After a stock sheet was made from these lines: they can't go on another sheet.</summary>
     /// <summary>
     /// The receipt has no more uses, so its pictures can leave the chat: it has lines, and every one of them is on
     /// a stock sheet that has been POSTED (inactive items aside, which can't go on a sheet). A line still waiting on
@@ -308,10 +383,11 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
     {
         var posted = sheets.Where(s => s.Posted && s.SheetId is not null).Select(s => s.SheetId!.Value).ToHashSet();
         lock (_gate)
-            return _lines.Count > 0 && _lines.Values.All(l => l.Status == ReceiptLineStatus.Inactive
+            return _lines.Count > 0 && _lines.Values.All(l => l.Status == ReceiptLineStatus.Inactive || l.Input.Skipped
                 || (_onSheet.TryGetValue(l.Number, out var id) && id is int sheet && posted.Contains(sheet)));
     }
 
+    /// <summary>After a stock sheet was made from these lines: they can't go on another sheet.</summary>
     public void MarkOnStockSheet(IEnumerable<int> lineNumbers, int? sheetId)
     {
         lock (_gate) foreach (var n in lineNumbers) _onSheet[n] = sheetId;
@@ -443,7 +519,12 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
 
         decimal? receivedUnits = null;
         string receivedMath = "";
-        if (input.Qty is { } qty && qty > 0)
+        if (input.Units is { } counted && counted > 0)
+        {
+            receivedUnits = counted;
+            receivedMath = $"{N(counted)} unit{(counted == 1 ? "" : "s")}, counted by the owner";
+        }
+        else if (input.Qty is { } qty && qty > 0)
         {
             if (input.UnitPrice is not null || units == 1) { receivedUnits = qty; receivedMath = $"{N(qty)} unit{(qty == 1 ? "" : "s")}"; }
             else if (units > 1) { receivedUnits = qty * units; receivedMath = $"{N(qty)} × {N(units)} = {N(receivedUnits.Value)} units"; }

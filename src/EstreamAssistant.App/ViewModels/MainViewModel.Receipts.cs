@@ -14,11 +14,17 @@ public sealed partial class MainViewModel
     private ReceiptIngest? _ingest;
     private ReceiptFolder? _receiptFolder;
     private Core.Counts.StockCounts? _counts;
+    private SavedReceipts? _savedReceipts;
 
-    /// <summary>Set once at startup by the app. <paramref name="counts"/>: for receipt → stock sheet.</summary>
-    public void UseReceipts(ReceiptSession session, ReceiptIngest ingest, ReceiptFolder folder, Core.Counts.StockCounts? counts = null)
+    /// <summary>
+    /// Set once at startup by the app. <paramref name="counts"/>: for receipt → stock sheet.
+    /// <paramref name="saved"/>: receipts saved for later (the Pending tab) and the lines of finished ones.
+    /// </summary>
+    public void UseReceipts(ReceiptSession session, ReceiptIngest ingest, ReceiptFolder folder, Core.Counts.StockCounts? counts = null,
+        SavedReceipts? saved = null)
     {
         _receipt = session;
+        _savedReceipts = saved;
         _counts = counts;
         if (counts is not null) counts.Changed += (_, _) => OnUi(() =>
         {
@@ -76,7 +82,7 @@ public sealed partial class MainViewModel
         foreach (var l in ReceiptLines) l.PropertyChanged += (_, _) => StageReceiptCommand.NotifyCanExecuteChanged();
 
         var files = _receipt.Files;
-        ReceiptTitle = "RECEIPT" + (_receipt.Source.Length > 0 ? " · " + _receipt.Source : files.Count > 0 ? " · " + files[0].FileName : "");
+        ReceiptTitle = "RECEIPT" + (_receipt.Title.Length > 0 ? " · " + _receipt.Title : files.Count > 0 ? " · " + files[0].FileName : "");
         var lines = _receipt.Lines;
         ReceiptSummary = lines.Count == 0
             ? (files.Count > 0 ? "Waiting for Claude to read it…" : "")
@@ -98,6 +104,7 @@ public sealed partial class MainViewModel
         StageReceiptCommand.NotifyCanExecuteChanged();
         FinishReceiptCommand.NotifyCanExecuteChanged();
         ReceiptStockSheetCommand.NotifyCanExecuteChanged();
+        SaveReceiptForLaterCommand.NotifyCanExecuteChanged();
     }
 
     private bool _wasReceiptOpen;
@@ -271,6 +278,9 @@ public sealed partial class MainViewModel
         if (!Confirm("Finish receipt", "Close this receipt and move it to Receipts\\Done?\n\nPending changes stay in the list."))
             return;
         var moved = new List<string>();
+        // Its lines are kept (a few KB, no pictures) so Claude can answer price questions later (search_receipts).
+        try { _savedReceipts?.RecordFinished(_receipt.Source, _receipt.Lines, _receipt.LinesOnStockSheets, _receipt.Files, DateTime.Now, _receipt.Store, _receipt.Date); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _log.Error("Keeping the finished receipt's lines failed", ex); }
         var files = _receipt.Finish();
         // Finished by the owner: no more uses, so its pictures leave the chat too.
         _chat.DropReceiptPictures(files);
@@ -285,6 +295,40 @@ public sealed partial class MainViewModel
         }
         if (moved.Count > 0) Add(FeedKind.App, $"Receipt finished and filed in Receipts\\Done: {string.Join(", ", moved)}.");
         _chat.AddContextNote("[receipt finished by the owner] The receipt table is closed.");
+    }
+
+    private bool CanSaveReceiptForLater() => _savedReceipts is not null && _receipt is { IsOpen: true } && _receipt.Lines.Count > 0
+        && !IsWorking && !IsChatBusy;
+
+    /// <summary>
+    /// The receipt goes to the Pending tab with its pictures and lines, so the owner can answer its questions there
+    /// later (scan barcodes, type quantities, make the stock sheet) without Claude. Its pictures leave the chat.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanSaveReceiptForLater))]
+    private void SaveReceiptForLater()
+    {
+        if (_receipt is null || _savedReceipts is null) return;
+        var files = _receipt.Files;
+        SavedReceipt saved;
+        try
+        {
+            saved = _savedReceipts.SaveForLater(_receipt.Source, _receipt.Lines, _receipt.LinesOnStockSheets, files, _receipt.PictureOf, DateTime.Now,
+                _receipt.Store, _receipt.Date);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.Error("Saving the receipt for later failed", ex);
+            Add(FeedKind.Error, $"Couldn't save the receipt for later: {ex.Message}");
+            return;
+        }
+        _receipt.Finish();
+        _chat.DropReceiptPictures(files);
+        var todo = saved.NeedsOwner;
+        Add(FeedKind.App, $"Saved for later: {saved.Title}. It's on the Pending tab" +
+            (todo > 0 ? $", where the app takes you through the {todo} row{(todo == 1 ? "" : "s")} that need you." : ".") +
+            " Its pictures leave the chat with your next message (saves tokens).");
+        _chat.AddContextNote($"[receipt saved for later by the owner] {saved.Title} ({saved.Lines.Count} lines, {todo} need the owner) is on the Pending tab. " +
+                             "The receipt table is closed and its pictures are out of the chat; search_receipts has its lines.");
     }
 
     private static bool IsInFolder(string path, string folder) =>

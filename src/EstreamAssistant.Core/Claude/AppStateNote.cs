@@ -13,7 +13,7 @@ public static class AppStateNote
 {
     private const int MaxShown = 8;
 
-    public static string Describe(PendingChanges? pending, StockCounts? counts, ReceiptSession? receipt, int batchMinItems)
+    public static string Describe(PendingChanges? pending, StockCounts? counts, ReceiptSession? receipt, int batchMinItems, SavedReceipts? saved = null)
     {
         var parts = new List<string>();
         if (pending is not null)
@@ -33,6 +33,8 @@ public static class AppStateNote
         }
         if (receipt is not null)
             parts.Add(receipt.IsOpen ? $"Receipt table: open, {receipt.Lines.Count} lines." : "Receipt table: closed.");
+        if (saved?.Pending is { Count: > 0 } later)
+            parts.Add($"Saved for later on the Pending tab ({later.Count}): " + Join(later.Select(r => $"{r.Title} ({r.NeedsOwner} to do)"), later.Count) + ".");
         return string.Join(" ", parts);
     }
 

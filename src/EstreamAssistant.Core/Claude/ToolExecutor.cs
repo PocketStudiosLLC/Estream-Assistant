@@ -32,6 +32,8 @@ public sealed class ToolExecutor
     private readonly Reports.ReportService? _reports;
     private readonly Labels.LabelQueue? _labels;
     private readonly Labels.EStreamLabels? _eStreamLabels;
+    /// <summary>Receipts saved for later or finished (search_receipts). Set at startup.</summary>
+    public Receipts.SavedReceipts? Saved { get; init; }
     private CodeTables? _codes;
 
     /// <summary>How many report rows go back to Claude (the full list is on the Reports tab).</summary>
@@ -79,6 +81,7 @@ public sealed class ToolExecutor
                 ChatTools.ItemSales => await ItemSalesAsync(input, ct).ConfigureAwait(false),
                 ChatTools.ReceiptStockSheet => await ReceiptStockSheetAsync(input, ct).ConfigureAwait(false),
                 ChatTools.QueueShelfLabels => await QueueShelfLabelsAsync(ct).ConfigureAwait(false),
+                ChatTools.SavedReceipts => SavedReceiptLines(input),
                 _ => ToolOutcome.Error($"Unknown tool '{name}'. Only {string.Join(", ", ChatTools.All.Select(t => t.Name))} exist."),
             };
         }
@@ -411,6 +414,10 @@ public sealed class ToolExecutor
     {
         if (_receipt is null) throw new ToolInputException("Receipts aren't available.");
         var source = Clip(GetString(input, "source", 200).Trim(), 60);
+        // Store and date name the receipt ("Superstore · Nov 25, 2026"). Optional: older calls leave them out.
+        var store = input.ContainsKey("store") ? Clip(GetString(input, "store", 200).Trim(), 40) : "";
+        var date = input.TryGetValue("date", out var dv) && dv.ValueKind == JsonValueKind.String
+            ? Receipts.ReceiptNames.ParseDate(dv.GetString(), DateOnly.FromDateTime(DateTime.Today)) : null;
         var rows = Get(input, "lines");
         if (rows.ValueKind != JsonValueKind.Array) throw new ToolInputException("'lines' must be a list.");
         if (rows.GetArrayLength() is 0 or > Receipts.ReceiptSession.MaxLines)
@@ -432,6 +439,10 @@ public sealed class ToolExecutor
                 if (v is < 0 or > 100_000) throw new ToolInputException($"{key} on line {line} isn't a sensible amount.");
                 return v;
             }
+            // Where the line is on the picture (for the highlight on the Pending tab). Optional: older calls leave it out.
+            int Pos(string key) => d.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : 0;
+            int picture = Pos("picture"), top = Math.Clamp(Pos("top"), 0, 100), bottom = Math.Clamp(Pos("bottom"), 0, 100);
+            if (picture < 0 || bottom <= top) picture = top = bottom = 0;
             var qty = NullableDecimal(d, "qty");
             if (qty is < 0 or > 100_000) throw new ToolInputException($"qty on line {line} isn't valid.");
             inputs.Add(new Receipts.ReceiptLineInput
@@ -446,9 +457,13 @@ public sealed class ToolExecutor
                 Readable = GetBool(d, "readable"),
                 Upc = upc,
                 Note = NullableString(d, "note", 300) is { } n ? Clip(n, 160) : null,
+                Picture = picture,
+                Top = top,
+                Bottom = bottom,
             });
         }
 
+        _receipt.SetInfo(store, date);
         var lines = await _receipt.SetLinesAsync(source, inputs, ct).ConfigureAwait(false);
         return new(JsonSerializer.Serialize(new
         {
@@ -456,6 +471,52 @@ public sealed class ToolExecutor
             next = "The table is on the owner's screen. Reply \"N of M lines ready.\" then one short line per line that needs them, " +
                    "saying only what to do (e.g. \"Line 4: scan the POPCORN 220 g barcode.\"). No reasons. Items to pick as a numbered list. " +
                    "Don't stage anything until they say what to do.",
+        }, Json), false);
+    }
+
+    public const int SavedLinesForClaude = 30;
+
+    private ToolOutcome SavedReceiptLines(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        if (Saved is null) throw new ToolInputException("Saved receipts aren't available.");
+        var text = GetString(input, "text", 100).Trim();
+        if (text.Length == 0)
+        {
+            var all = Saved.All.OrderByDescending(r => r.Saved).Take(SavedLinesForClaude).ToList();
+            return new(JsonSerializer.Serialize(new
+            {
+                receipts = all.Select(r => new
+                {
+                    receipt = r.Title,
+                    date = r.Saved.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    state = r.Finished is null ? $"saved for later on the Pending tab, {r.NeedsOwner} line(s) need the owner" : "finished",
+                    lines = r.Lines.Count,
+                }),
+                next = all.Count == 0 ? "No receipts are saved yet." : "Search with item words, a code or a UPC to see the lines.",
+            }, Json), false);
+        }
+        var hits = Saved.Search(text, SavedLinesForClaude);
+        return new(JsonSerializer.Serialize(new
+        {
+            lines = hits.Select(h => new
+            {
+                receipt = h.Receipt.Title,
+                date = h.Receipt.Saved.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                state = h.Receipt.Finished is null ? "saved for later" : "finished",
+                line = h.Line.Input.Line,
+                text = h.Line.Input.Text,
+                code = h.Line.Input.Code,
+                qty = h.Line.Input.Qty,
+                case_price = h.Line.Input.CasePrice,
+                unit_price = h.Line.Input.UnitPrice,
+                line_total = h.Line.Input.LineTotal,
+                readable = h.Line.Input.Readable,
+                upc = h.Line.Upc?.ToString(CultureInfo.InvariantCulture),
+                item = h.Line.Item,
+            }),
+            next = hits.Count == 0
+                ? "Nothing on the saved receipts matches. Say so; the owner can attach the receipt if they have it."
+                : "Answer from these lines. Prices are as printed on the receipt (before deposits and tax).",
         }, Json), false);
     }
 

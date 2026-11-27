@@ -111,20 +111,22 @@ public partial class App : Application
             ? new Core.Labels.PowerShellLabelExecutor(settings.EngineFolder, paths.RunsFolder, _log)
             : new Core.Labels.MockLabelExecutor(repo) { Delay = TimeSpan.FromSeconds(2) };
         var eStreamLabels = new Core.Labels.EStreamLabels(labels, labelExecutor, () => settings.LabelDesign, _log);
-        var tools = new ToolExecutor(lookup, settings, pending, counts, receipt, reports, labels, eStreamLabels);
+        var savedReceipts = new SavedReceipts(paths.SavedReceiptsFolder, _log);
+        var tools = new ToolExecutor(lookup, settings, pending, counts, receipt, reports, labels, eStreamLabels) { Saved = savedReceipts };
         IChatService chat = e.Args.Contains("--demo-chat")
             ? new DemoChatService(tools)
             : new ClaudeChatService(secrets.GetApiKey, settings, tools, usage, _log);
         if (chat is ClaudeChatService claude)
-            claude.StateSnapshot = () => AppStateNote.Describe(pending, counts, receipt, pending.PriceBatchMinItems);
+            claude.StateSnapshot = () => AppStateNote.Describe(pending, counts, receipt, pending.PriceBatchMinItems, savedReceipts);
         _log.Info($"Chat: {chat.GetType().Name}, chat model {settings.Model} ({settings.Effort}), receipt model {settings.ReceiptModel} ({settings.ReceiptEffort}), prompt {ClaudeChatService.SystemPromptVersion}.");
         var mainVm = new MainViewModel(lookup, settings, secrets, _log, new EStreamMonitor(), settingsVm, chat, usage, pending)
         {
             History = new HistoryViewModel(history),
             Counts = new CountsViewModel(counts, lookup, _log),
             Reports = new ReportsViewModel(reports, _log, labels, eStreamLabels),
+            PendingReceipts = new PendingReceiptsViewModel(savedReceipts, lookup, counts, receiptFolder, _log, () => settings.PriceEndings),
         };
-        mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder, counts);
+        mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder, counts, savedReceipts);
         _log.Info(receiptFolder.Start() ? $"Watching {receiptFolder.Inbox} for receipts." : $"No receipts folder at {receiptFolder.Inbox}; not watching.");
         counts.WorkStarted += (_, what) => mainVm.ShowWorking(what, !counts.IsMock);
         counts.WorkFinished += (_, _) => mainVm.HideWorking();
@@ -262,6 +264,34 @@ public partial class App : Application
                     // --pick-line 2  (picks the first candidate for receipt line 2)
                     var lineVm = vm.ReceiptLines.FirstOrDefault(l => l.Number == int.Parse(value));
                     if (lineVm?.Candidates.FirstOrDefault() is { } cand) await vm.ChooseReceiptCandidateCommand.ExecuteAsync(cand);
+                    break;
+                case "--snap":
+                    // --snap C:\path\shot.png  (the window as a picture, wherever it is on screen)
+                    await Task.Delay(800);
+                    window.UpdateLayout();
+                    var root = (System.Windows.FrameworkElement)window.Content;
+                    var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap((int)root.ActualWidth, (int)root.ActualHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                    rtb.Render(root);
+                    var png = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                    png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(rtb));
+                    using (var fs = File.Create(value)) png.Save(fs);
+                    break;
+                case "--save-later":
+                    i--; // presses "Save for later" on the receipt
+                    vm.SaveReceiptForLaterCommand.Execute(null);
+                    break;
+                case "--open-pending" when int.TryParse(value, out var nth):
+                    // --open-pending 1  (opens the first receipt on the Pending tab)
+                    if (vm.PendingReceipts is { } pr && nth >= 1 && nth <= pr.Receipts.Count) pr.Selected = pr.Receipts[nth - 1];
+                    await Task.Delay(1500);
+                    break;
+                case "--pending-rename":
+                    i--; // presses Rename on the open Pending receipt
+                    vm.PendingReceipts!.StartRenameCommand.Execute(null);
+                    break;
+                case "--pending-scan":
+                    // --pending-scan 060410079591  (a scan on the Pending tab)
+                    await vm.PendingReceipts!.HandleScanAsync(value);
                     break;
                 case "--stage-receipt":
                     i--; // presses "Add ticked to pending" in the receipt table

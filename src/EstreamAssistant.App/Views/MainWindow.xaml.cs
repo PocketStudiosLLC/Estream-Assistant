@@ -17,9 +17,10 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm;
     private readonly ScanDetector _scanner;
     private readonly DispatcherTimer _eStreamTimer;
-    // Tab order: Assistant, Stock counts, Reports, History, Settings.
-    private const int CountsTab = 1;
-    private const int HistoryTab = 3;
+    // Tab order: Assistant, Pending, Stock counts, Reports, History, Settings.
+    private const int PendingTab = 1;
+    private const int CountsTab = 2;
+    private const int HistoryTab = 4;
 
     public MainWindow(MainViewModel vm, AppSettings settings)
     {
@@ -58,6 +59,26 @@ public partial class MainWindow : Window
             };
             counts.FocusCountRequested += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Input, () => { CountBox.Focus(); CountBox.SelectAll(); });
         }
+        if (vm.PendingReceipts is { } later)
+        {
+            later.Confirm = (title, text) =>
+                MessageBox.Show(this, text, title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
+            // A new question: the barcode box when it wants a barcode, else the number box.
+            later.FocusAnswerRequested += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                if (!IsActive || Tabs.SelectedIndex != PendingTab) return;
+                var box = later.ShowBarcode && later.BarcodeText.Length == 0 ? PendingBarcodeBox : later.ShowNumber ? PendingNumberBox : null;
+                if (box is null) return;
+                box.Focus();
+                box.SelectAll();
+            });
+        }
+        if (vm.PendingReceipts is { } renaming)
+            renaming.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(PendingReceiptsViewModel.IsRenaming) && renaming.IsRenaming)
+                    Dispatcher.BeginInvoke(DispatcherPriority.Input, () => { PendingNameBox.Focus(); PendingNameBox.SelectAll(); });
+            };
         if (vm.Reports is { } reports)
         {
             reports.PickSaveFile = name =>
@@ -242,6 +263,12 @@ public partial class MainWindow : Window
                 tb.CaretIndex = tb.Text.Length;
             }
             _vm.ScanText = "";
+            if (Tabs.SelectedIndex == PendingTab && _vm.PendingReceipts is not null)
+            {
+                // Pending tab: the scan answers the question being asked (e.g. the barcode for row 4).
+                await _vm.PendingReceipts.HandleScanAsync(code);
+                return;
+            }
             if (Tabs.SelectedIndex == CountsTab && _vm.Counts is not null)
             {
                 // Scan-and-count mode: the scan picks the item, then the owner types the count.
@@ -253,6 +280,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_vm.PendingReceipts is { } named && Keyboard.FocusedElement == PendingNameBox)
+        {
+            e.Handled = true;
+            named.SaveNameCommand.Execute(null);
+            return;
+        }
+        if (_vm.PendingReceipts is { } pr && (Keyboard.FocusedElement == PendingBarcodeBox || Keyboard.FocusedElement == PendingNumberBox))
+        {
+            e.Handled = true;
+            // Enter in the barcode box moves on to the number when the row needs both.
+            if (Keyboard.FocusedElement == PendingBarcodeBox && pr.ShowNumber && pr.NumberText.Trim().Length == 0) { PendingNumberBox.Focus(); return; }
+            await pr.AnswerCommand.ExecuteAsync(null);
+            return;
+        }
         if (_vm.Counts is not null && Keyboard.FocusedElement == CountUpcBox)
         {
             e.Handled = true;

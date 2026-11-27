@@ -104,6 +104,22 @@ rewritten until Save, GM note on 1 × 1 items, double full stop, 12-digit barcod
 - [ ] Pictures leave the chat only after every line is on a POSTED stock sheet (the chat says so), not when the sheet
       is only made; the next message's cost in the app log drops.
 
+## Next: Pending tab (receipts saved for later)
+- [ ] Chat model: a PC set up before v0.1.4 moves from Opus to Sonnet for ordinary chat (Settings shows claude-sonnet-5-5);
+      receipts still use Opus.
+- [ ] Out of credit (or any API error) shows a plain sentence, no JSON.
+- [ ] Read a receipt with a few rows that need you, press "Save for later": the receipt card closes, the chat says so,
+      the tab says "Pending (1)", and the original leaves the Receipts folder (not offered again at startup).
+- [ ] Pending tab: the receipt is beside the rows; the rows that need you are highlighted on the picture in about the
+      right place (Claude's estimate), and the one being asked about is orange.
+- [ ] Scan a barcode for a "Scan the barcode for row N" question: it fills in and moves to the next question.
+      Quantity, units and "Yes, it's right" work; "Leave it out" and "Put back" work.
+- [ ] Make stock sheet from the Pending tab (with a question still open: it asks first), post it on Stock counts, then
+      the receipt says Done; Finish files it in Receipts\Done.
+- [ ] Close and reopen the app: the saved receipt and its answers are still there.
+- [ ] Ask Claude "what did we pay for X" about a saved or finished receipt: it answers from search_receipts without
+      asking for the picture.
+
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).
 - [x] Publish-EsStockSheet.ps1 RESULT line + exit 1, Invoke-EsCsv.ps1 moving Inbox files (done on the store PC in

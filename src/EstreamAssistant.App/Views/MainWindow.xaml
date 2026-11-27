@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:EstreamAssistant.App.ViewModels"
+        xmlns:conv="clr-namespace:EstreamAssistant.App.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
@@ -375,6 +376,9 @@
                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
                                         <Button Content="Hide" Command="{Binding ToggleReceiptCommand}" Padding="8,2" MinHeight="26" FontSize="13"
                                                 ToolTip="Show the item card again (the receipt stays open)" />
+                                        <Button Content="Save for later" Command="{Binding SaveReceiptForLaterCommand}" Padding="8,2" MinHeight="26" FontSize="13" Margin="6,0"
+                                                ToolTipService.ShowOnDisabled="True"
+                                                ToolTip="Move the receipt to the Pending tab, with its pictures, to scan barcodes and check rows there later. Takes it out of the chat (saves tokens)." />
                                         <Button Content="Finish receipt" Command="{Binding FinishReceiptCommand}" Padding="8,2" MinHeight="26" FontSize="13"
                                                 ToolTip="Close the receipt and move it to Receipts\Done" />
                                     </StackPanel>
@@ -541,6 +545,274 @@
                             </DockPanel>
                         </Border>
                     </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ===================== PENDING (receipts saved for later) ===================== -->
+            <TabItem Header="{Binding PendingReceipts.TabHeader, FallbackValue='  Pending  '}">
+                <Grid Margin="6" DataContext="{Binding PendingReceipts}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="240" />
+                        <ColumnDefinition Width="5*" />
+                        <ColumnDefinition Width="6*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- The saved receipts -->
+                    <Border Style="{StaticResource Card}">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="SAVED FOR LATER" Style="{StaticResource SectionTitle}" />
+                            <TextBlock DockPanel.Dock="Top" Text="Nothing yet. Press &quot;Save for later&quot; on a receipt on the Assistant tab." FontSize="13"
+                                       Foreground="{StaticResource Muted}" TextWrapping="Wrap" Visibility="{Binding HasReceipts, Converter={StaticResource Hidden}}" />
+                            <ListBox ItemsSource="{Binding Receipts}" SelectedItem="{Binding Selected}" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Foreground" Value="{StaticResource Text}" />
+                                        <Setter Property="Padding" Value="8,6" />
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ListBoxItem">
+                                                    <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}" Margin="0,1">
+                                                        <ContentPresenter />
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource ButtonBg}" />
+                                                        </Trigger>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource OwnerBubble}" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:SavedReceiptCardViewModel}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                            <Border CornerRadius="4" Padding="6,1" Margin="0,3,0,0" HorizontalAlignment="Left"
+                                                    Background="{Binding Level, Converter={StaticResource StatusBrush}}">
+                                                <TextBlock Text="{Binding StateText}" Foreground="#16181B" FontWeight="SemiBold" FontSize="12" />
+                                            </Border>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Nothing open -->
+                    <Border Grid.Column="1" Grid.ColumnSpan="2" Style="{StaticResource Card}" Visibility="{Binding ShowEmpty, Converter={StaticResource Visible}}">
+                        <TextBlock Text="{Binding EmptyText}" FontSize="16" Foreground="{StaticResource Muted}" TextWrapping="Wrap" TextAlignment="Center"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="520" />
+                    </Border>
+
+                    <!-- The receipt, with the rows that need you highlighted -->
+                    <Border Grid.Column="1" Style="{StaticResource Card}" Visibility="{Binding HasOpen, Converter={StaticResource Visible}}">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Visibility="{Binding HasPictures, Converter={StaticResource Visible}}">
+                                    <Button Content="−" Command="{Binding ZoomOutCommand}" MinWidth="32" Padding="6,0" MinHeight="26" ToolTip="Smaller" />
+                                    <TextBlock Text="{Binding ZoomText}" VerticalAlignment="Center" Margin="6,0" FontSize="13" Foreground="{StaticResource Muted}" MinWidth="40" TextAlignment="Center" />
+                                    <Button Content="+" Command="{Binding ZoomInCommand}" MinWidth="32" Padding="6,0" MinHeight="26" ToolTip="Bigger" />
+                                </StackPanel>
+                                <TextBlock Text="RECEIPT" Style="{StaticResource SectionTitle}" />
+                            </DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Visibility="{Binding HasPdfOnly, Converter={StaticResource Visible}}" Margin="0,8">
+                                <TextBlock Text="This receipt is a PDF with typed text, so there's no picture to show here. Open it beside this window to check the rows."
+                                           TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
+                                <Button Content="Open the PDF" Command="{Binding OpenOriginalCommand}" HorizontalAlignment="Left" Margin="0,8,0,0" Padding="12,3" />
+                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="No picture was saved with this receipt." Foreground="{StaticResource Muted}" Margin="0,8"
+                                       Visibility="{Binding NoPictures, Converter={StaticResource Visible}}" />
+                            <ScrollViewer x:Name="PendingPictureScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Visible"
+                                          Visibility="{Binding HasPictures, Converter={StaticResource Visible}}">
+                                <ItemsControl ItemsSource="{Binding Pictures}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:SavedPictureViewModel}">
+                                            <StackPanel Margin="0,0,0,6" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{StaticResource Muted}"
+                                                           Visibility="{Binding HasLabel, Converter={StaticResource Visible}}" />
+                                                <Grid HorizontalAlignment="Left">
+                                                    <Grid.Width>
+                                                        <MultiBinding Converter="{StaticResource ZoomWidth}">
+                                                            <Binding Path="ViewportWidth" ElementName="PendingPictureScroll" />
+                                                            <Binding Path="DataContext.PendingReceipts.Zoom" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        </MultiBinding>
+                                                    </Grid.Width>
+                                                    <Image Source="{Binding Image}" Stretch="Uniform" />
+                                                    <ItemsControl ItemsSource="{Binding Highlights}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate><Grid /></ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate DataType="{x:Type vm:HighlightViewModel}">
+                                                                <Grid>
+                                                                    <Grid.RowDefinitions>
+                                                                        <RowDefinition Height="{Binding Above}" />
+                                                                        <RowDefinition Height="{Binding Band}" />
+                                                                        <RowDefinition Height="{Binding Below}" />
+                                                                    </Grid.RowDefinitions>
+                                                                    <Border x:Name="Band" Grid.Row="1" Background="#40F2C46D" BorderBrush="#F2C46D" BorderThickness="2" CornerRadius="3"
+                                                                            ToolTip="{Binding Tip}" conv:BringIntoView.When="{Binding IsCurrent}" />
+                                                                </Grid>
+                                                                <DataTemplate.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                                        <Setter TargetName="Band" Property="Background" Value="#55FF8C1A" />
+                                                                        <Setter TargetName="Band" Property="BorderBrush" Value="#FF8C1A" />
+                                                                        <Setter TargetName="Band" Property="BorderThickness" Value="3" />
+                                                                    </DataTrigger>
+                                                                </DataTemplate.Triggers>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </Grid>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- The stock sheet rows, and what's needed next -->
+                    <Border Grid.Column="2" Style="{StaticResource Card}" Visibility="{Binding HasOpen, Converter={StaticResource Visible}}">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top">
+                                <Button DockPanel.Dock="Right" Content="Finish" Command="{Binding FinishCommand}" Padding="10,2" MinHeight="26" FontSize="13" VerticalAlignment="Top"
+                                        ToolTip="Take the receipt off this tab and file it in Receipts\Done" />
+                                <StackPanel>
+                                    <DockPanel Visibility="{Binding IsRenaming, Converter={StaticResource Hidden}}">
+                                        <Button DockPanel.Dock="Right" Content="Rename" Command="{Binding StartRenameCommand}" Padding="8,0" MinHeight="22" FontSize="12"
+                                                Margin="6,0,6,0" VerticalAlignment="Top" ToolTip="Give this receipt your own name (it's also put on the stock sheet in eStream)" />
+                                        <TextBlock Text="{Binding OpenTitle}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    </DockPanel>
+                                    <DockPanel Visibility="{Binding IsRenaming, Converter={StaticResource Visible}}" Margin="0,0,6,0">
+                                        <Button DockPanel.Dock="Right" Content="Cancel" Command="{Binding CancelRenameCommand}" Padding="8,0" MinHeight="30" FontSize="12" Margin="6,0,0,0" />
+                                        <Button DockPanel.Dock="Right" Content="Save" Command="{Binding SaveNameCommand}" Style="{StaticResource PrimaryButton}" MinHeight="30" Padding="10,0" Margin="6,0,0,0" />
+                                        <TextBox x:Name="PendingNameBox" Text="{Binding NameText, UpdateSourceTrigger=PropertyChanged}" MinHeight="30" FontSize="15"
+                                                 ToolTip="e.g. Superstore · Nov 25. Leave it empty to go back to the store and date on the receipt." />
+                                    </DockPanel>
+                                    <TextBlock Text="{Binding OpenSummary}" FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DockPanel>
+
+                            <!-- The question -->
+                            <Border DockPanel.Dock="Top" Background="{StaticResource OwnerBubble}" CornerRadius="8" Padding="12,10" Margin="0,8,0,4"
+                                    Visibility="{Binding HasQuestion, Converter={StaticResource Visible}}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="◀ Back" Command="{Binding PreviousCommand}" Padding="8,1" MinHeight="24" FontSize="12" ToolTip="The question before" />
+                                            <Button Content="Later ▶" Command="{Binding NextCommand}" Padding="8,1" MinHeight="24" FontSize="12" Margin="6,0,0,0"
+                                                    ToolTip="Skip this one for now: it stays on the list" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding StepText}" FontSize="12" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock Text="{Binding QuestionText}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,2" />
+                                    <TextBlock Text="{Binding QuestionDetail}" FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                    <ItemsControl ItemsSource="{Binding Candidates}" Margin="0,6,0,0" Visibility="{Binding HasCandidates, Converter={StaticResource Visible}}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type vm:ReceiptCandidateViewModel}">
+                                                <Button Style="{StaticResource ChoiceButton}" Padding="8,3" ToolTip="This is the item on the receipt"
+                                                        Command="{Binding DataContext.PendingReceipts.PickCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Label}" FontSize="14" />
+                                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource Muted}" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <WrapPanel Margin="0,8,0,0">
+                                        <Grid Width="230" Margin="0,0,8,6" Visibility="{Binding ShowBarcode, Converter={StaticResource Visible}}">
+                                            <TextBox x:Name="PendingBarcodeBox" Text="{Binding BarcodeText, UpdateSourceTrigger=PropertyChanged}" MinHeight="36" FontSize="16" />
+                                            <TextBlock Text="Barcode (scan or type)" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{StaticResource Placeholder}"
+                                                       Visibility="{Binding Text, ElementName=PendingBarcodeBox, Converter={StaticResource Hidden}}" />
+                                        </Grid>
+                                        <Grid Width="200" Margin="0,0,8,6" Visibility="{Binding ShowNumber, Converter={StaticResource Visible}}">
+                                            <TextBox x:Name="PendingNumberBox" Text="{Binding NumberText, UpdateSourceTrigger=PropertyChanged}" MinHeight="36" FontSize="16" />
+                                            <TextBlock Text="{Binding NumberLabel}" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{StaticResource Placeholder}"
+                                                       Visibility="{Binding Text, ElementName=PendingNumberBox, Converter={StaticResource Hidden}}" />
+                                        </Grid>
+                                        <Button Content="OK" Command="{Binding AnswerCommand}" Style="{StaticResource PrimaryButton}" MinWidth="70" Margin="0,0,8,6" />
+                                        <Button Content="Yes, it's right" Command="{Binding YesCommand}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,6"
+                                                Visibility="{Binding ShowYes, Converter={StaticResource Visible}}" />
+                                        <Button Content="Leave it out" Command="{Binding LeaveOutCommand}" Margin="0,0,8,6" Padding="10,2"
+                                                ToolTip="This row won't go on the stock sheet (not delivered, or not stocked)" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Nothing left to ask -->
+                            <Border DockPanel.Dock="Top" Background="{StaticResource AppBubble}" CornerRadius="8" Padding="12,10" Margin="0,8,0,4"
+                                    Visibility="{Binding ShowAllDone, Converter={StaticResource Visible}}">
+                                <TextBlock Text="{Binding DoneText}" FontSize="15" TextWrapping="Wrap" />
+                            </Border>
+
+                            <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="2,4"
+                                       Visibility="{Binding Status, Converter={StaticResource Visible}}" />
+
+                            <DockPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+                                <Button DockPanel.Dock="Right" Content="Make stock sheet…" Command="{Binding MakeStockSheetCommand}" Style="{StaticResource PrimaryButton}"
+                                        ToolTipService.ShowOnDisabled="True"
+                                        ToolTip="Makes a stock sheet with on hand + the units received for the ready rows (asks first). The stock changes when you post it on the Stock counts tab." />
+                                <TextBlock Text="Click a row to see it on the receipt. Nothing here uses Claude." FontSize="12" Foreground="{StaticResource Muted}"
+                                           TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </DockPanel>
+
+                            <TextBlock DockPanel.Dock="Top" Text="STOCK SHEET ROWS" FontSize="12" Foreground="{StaticResource Muted}" Margin="2,8,0,2" />
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding Rows}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:SavedRowViewModel}">
+                                            <Border x:Name="RowBd" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1" Padding="6,5" Background="Transparent"
+                                                    Cursor="Hand" conv:BringIntoView.When="{Binding IsCurrent}">
+                                                <Border.InputBindings>
+                                                    <MouseBinding Gesture="LeftClick"
+                                                                  Command="{Binding DataContext.PendingReceipts.GoToRowCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                  CommandParameter="{Binding}" />
+                                                </Border.InputBindings>
+                                                <DockPanel>
+                                                    <TextBlock DockPanel.Dock="Left" Text="{Binding RowText}" Width="58" FontWeight="SemiBold" Foreground="{StaticResource Muted}" />
+                                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                                                        <Button Content="Put back" Padding="6,0" MinHeight="22" FontSize="12" Margin="0,0,6,0"
+                                                                Command="{Binding DataContext.PendingReceipts.PutBackCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}" Visibility="{Binding IsLeftOut, Converter={StaticResource Visible}}"
+                                                                ToolTip="Put this row back on the list" />
+                                                        <Border CornerRadius="4" Padding="6,1" Background="{Binding Level, Converter={StaticResource StatusBrush}}">
+                                                            <TextBlock Text="{Binding StatusText}" Foreground="#16181B" FontWeight="SemiBold" FontSize="12" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <StackPanel Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding ReceiptText}" FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{Binding ItemText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                                   Visibility="{Binding ItemText, Converter={StaticResource Visible}}" />
+                                                        <TextBlock Text="{Binding StockText}" FontSize="12" Foreground="{StaticResource Muted}"
+                                                                   Visibility="{Binding StockText, Converter={StaticResource Visible}}" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Border>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding NeedsYou}" Value="True">
+                                                    <Setter TargetName="RowBd" Property="Background" Value="#26F2C46D" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                    <Setter TargetName="RowBd" Property="Background" Value="#40FF8C1A" />
+                                                    <Setter TargetName="RowBd" Property="BorderBrush" Value="#FF8C1A" />
+                                                    <Setter TargetName="RowBd" Property="BorderThickness" Value="3,0,0,1" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
                 </Grid>
             </TabItem>
 

@@ -34,6 +34,7 @@
         <conv:StatusToBrushConverter x:Key="StatusBrush" />
         <conv:BoolToVisibilityConverter x:Key="Visible" />
         <conv:BoolToVisibilityConverter x:Key="Hidden" Invert="True" />
+        <conv:ZoomWidthConverter x:Key="ZoomWidth" />
 
         <Style TargetType="Window">
             <Setter Property="FontFamily" Value="{StaticResource AppFont}" />

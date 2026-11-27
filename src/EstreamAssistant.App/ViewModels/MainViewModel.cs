@@ -79,7 +79,7 @@ public sealed partial class MainViewModel : ObservableObject
     public Func<string, string, bool> Confirm { get; set; } = (_, _) => false;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(DryRunCommand), nameof(SaveCommand), nameof(ClearPendingCommand), nameof(StageReceiptCommand), nameof(ReceiptStockSheetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DryRunCommand), nameof(SaveCommand), nameof(ClearPendingCommand), nameof(StageReceiptCommand), nameof(ReceiptStockSheetCommand), nameof(SaveReceiptForLaterCommand))]
     private bool _isWorking;
 
     [ObservableProperty] private string _workingText = "";
@@ -338,7 +338,7 @@ public sealed partial class MainViewModel : ObservableObject
     private string _chatText = "";
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SendChatCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SendChatCommand), nameof(SaveReceiptForLaterCommand))]
     [NotifyPropertyChangedFor(nameof(ChatPlaceholder))]
     private bool _isChatBusy;
 
@@ -352,6 +352,8 @@ public sealed partial class MainViewModel : ObservableObject
     public HistoryViewModel? History { get; init; }
     public CountsViewModel? Counts { get; init; }
     public ReportsViewModel? Reports { get; init; }
+    /// <summary>The Pending tab: receipts saved for later.</summary>
+    public PendingReceiptsViewModel? PendingReceipts { get; init; }
 
     /// <summary>Raised when the scan box should get focus back (after a lookup, a choice, ...).</summary>
     public event EventHandler? FocusScanBoxRequested;
@@ -603,7 +605,8 @@ public sealed partial class MainViewModel : ObservableObject
             var result = await _chat.SendAsync(sentText, files.Select(f => f.File).ToList(), progress, _chatCts.Token);
             bubble.Status = "";
             // Files only join the receipt when Claude read them as a receipt (a count-sheet photo doesn't).
-            if (files.Count > 0 && _receipt is { IsOpen: true }) _receipt.AddFiles(files.Select(f => f.File));
+            if (files.Count > 0 && _receipt is { IsOpen: true })
+                _receipt.AddFiles(files.Select(f => f.File), files.Select(f => _chat.PictureNumbers(f.File)).ToList());
             _chatTurns++;
             if (!_longChatOffered && _settings.LongChatTurns > 0 && _chatTurns >= _settings.LongChatTurns)
             {

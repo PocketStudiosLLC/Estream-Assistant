@@ -38,6 +38,13 @@ public partial class HelpWindow : Window
             "Drop, paste or add a photo or PDF of a supplier receipt. Claude reads each line, matches it to your items and shows new " +
             "unit costs. You can then update costs or set prices from it.",
             ["Update the costs from this receipt", "Put a 30% markup on the chips from this receipt"]),
+        new("Save a receipt for later",
+            "When a receipt has rows you need to check (a barcode to scan, a quantity to read off the goods), press \"Save for later\" " +
+            "on the receipt. It moves to the Pending tab with its pictures. Open it there when you have the goods: the app asks for " +
+            "what's missing one row at a time (\"Scan the barcode for row 4 on the receipt\"), with that row highlighted on the receipt, " +
+            "then makes the stock sheet. The Pending tab doesn't use Claude. Claude can still answer questions about saved receipts, " +
+            "like what you paid, without the picture.",
+            ["What did we pay for Lays on the last receipt?"]),
         new("Stock counts",
             "Tell Claude what you counted (or send a photo of a count sheet) to see over/short against eStream. " +
             "The Stock counts tab keeps the list and can make an eStream stock sheet from it.",

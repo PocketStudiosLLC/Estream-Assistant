@@ -17,6 +17,10 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
     public bool IsConfigured => true;
     public void AddContextNote(string note) { }
     public bool DropReceiptPictures(IEnumerable<ReceiptFile> files) => false;
+    // Each attachment is "picture N", like the real chat labels them.
+    private int _pictures;
+    private readonly Dictionary<ReceiptFile, int> _numbers = [];
+    public IReadOnlyList<int> PictureNumbers(ReceiptFile file) => _numbers.TryGetValue(file, out var n) ? [n] : [];
     public void Reset() { }
     public Task TestConnectionAsync(CancellationToken ct) => Task.CompletedTask;
 
@@ -34,21 +38,26 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
 
         if (attachments.Count > 0)
         {
+            foreach (var a in attachments) _numbers[a] = ++_pictures;
+            var pic = _numbers[attachments[0]];
             // A made-up reading of a sample invoice (it doesn't look at the picture).
             progress?.Report(new ChatEvent.ToolStarted(ChatTools.ShowReceiptLines, "Matching the receipt lines to eStream items…"));
             await Task.Delay(600, ct);
             await tools.ExecuteAsync(ChatTools.ShowReceiptLines, Args(new
             {
                 source = "Sample invoice (demo)",
+                store = "Demo Wholesale",
+                date = DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 lines = new object[]
                 {
-                    Line(1, "LAYS ALL DRESSED 220G", "060410079591", 2, 55.20m, null, 110.40m),
-                    Line(2, "LAYS CUCUMBER", null, 1, 55.20m, null, 55.20m),
-                    Line(3, "COKE 2L 8PK", "67000000409", 3, 21.60m, null, 64.80m),
-                    Line(4, "DORITOS NACHO CHS 235G", "28400090360", 1, 54.40m, null, 45.40m),
-                    Line(5, "KRAFT DINNER ORIG", null, 2, 14.40m, null, 28.80m),
+                    Line(1, pic, "LAYS ALL DRESSED 220G", "060410079591", 2, 55.20m, null, 110.40m),
+                    Line(2, pic, "LAYS CUCUMBER", null, 1, 55.20m, null, 55.20m),
+                    Line(3, pic, "COKE 2L 8PK", "67000000409", 3, 21.60m, null, 64.80m),
+                    Line(4, pic, "DORITOS NACHO CHS 235G", "28400090360", 1, 54.40m, null, 45.40m),
+                    Line(5, pic, "KRAFT DINNER ORIG", null, 2, 14.40m, null, 28.80m),
                     new { line = 6, text = "HEINZ KETCH?? 1L", code = (string?)null, qty = (decimal?)null, case_price = (decimal?)null,
-                          unit_price = (decimal?)null, line_total = (decimal?)null, readable = false, upc = (string?)null, note = "Price is smudged." },
+                          unit_price = (decimal?)null, line_total = (decimal?)null, readable = false, upc = (string?)null, note = "Price is smudged.",
+                          picture = pic, top = 68, bottom = 73 },
                 },
             }), ct);
             _receiptRead = true;
@@ -133,9 +142,11 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
         return new ChatTurnResult(reply, false, false, 0, 0);
     }
 
-    private static object Line(int line, string text, string? code, decimal qty, decimal casePrice, decimal? unitPrice, decimal total) => new
+    /// <summary>A demo line; on the sample receipt picture, line n is printed at 10 + 10 n percent down.</summary>
+    private static object Line(int line, int picture, string text, string? code, decimal qty, decimal casePrice, decimal? unitPrice, decimal total) => new
     {
         line, text, code, qty, case_price = casePrice, unit_price = unitPrice, line_total = total, readable = true, upc = (string?)null, note = (string?)null,
+        picture, top = 8 + 10 * line, bottom = 13 + 10 * line,
     };
 
     private static Dictionary<string, JsonElement> Args(object o) =>

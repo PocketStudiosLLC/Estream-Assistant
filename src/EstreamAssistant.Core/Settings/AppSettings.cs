@@ -45,7 +45,7 @@ public sealed class AppSettings
 
     /// <summary>Which defaults the file was written with (0 = before v0.1.8). See <see cref="Migrate"/>.</summary>
     public int SettingsVersion { get; set; }
-    public const int CurrentSettingsVersion = 1;
+    public const int CurrentSettingsVersion = 2;
     /// <summary>
     /// How long the registers take to get back-office changes (eStream Server's polling interval; the manual says
     /// about 10 minutes). Only used in messages.
@@ -120,6 +120,12 @@ public sealed class AppSettings
         {
             if (ScriptTimeoutBaseSeconds == 60) ScriptTimeoutBaseSeconds = 120;
             if (ScriptTimeoutPerItemSeconds == 30) ScriptTimeoutPerItemSeconds = 90;
+        }
+        if (SettingsVersion < 2)
+        {
+            // v0.1.0-0.1.3 used Opus for every message and saved it; since v0.1.4 ordinary chat defaults to Sonnet
+            // (Opus stays for receipts). Files from then still say Opus, so move them once.
+            if (Model.Trim() == "claude-opus-5-5") Model = "claude-sonnet-5-5";
         }
         SettingsVersion = CurrentSettingsVersion;
         return this;
