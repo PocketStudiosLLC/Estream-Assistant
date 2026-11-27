@@ -607,6 +607,9 @@ public sealed class ClaudeChatService : IChatService
         if (ex is AnthropicOverloadedException or Anthropic5xxException or AnthropicServiceUnavailableException
                 or AnthropicGatewayTimeoutException)
             return "Claude's service is having trouble right now. Try again in a minute.";
+        if (ex is AnthropicApiException && Says("compiled grammar", "tool schema", "strict tools"))
+            return "This version of eStream Assistant has a problem talking to Claude, so no message will go through. " +
+                   "Send in the Bugs list and install the next update. Everything else in the app still works.";
         if (ex is AnthropicContentTooLargeException || Says("prompt is too long", "too many tokens", "context window", "request too large"))
             return "This chat has got too long for Claude. Start a new chat. If you sent receipts, send fewer at a time.";
         if (ex is AnthropicApiException && Says("image", "pdf", "document"))

@@ -255,6 +255,23 @@ public class PendingReceiptsTests : IDisposable
         Assert.True(run.Ok, run.Message);
     }
 
+    [Fact]
+    public async Task Receipt_lines_without_the_optional_fields_still_work()
+    {
+        // show_receipt_lines isn't strict, so Claude may leave out store, date and the picture positions.
+        var lookup = new ItemLookupService(new MockItemRepository { Delay = TimeSpan.Zero }, new NameCache(Path.Combine(_dir.Path, "n2.json")));
+        var session = new ReceiptSession(lookup, () => []);
+        var tools = new ToolExecutor(lookup, new AppSettings(), receipt: session);
+        var r = await tools.ExecuteAsync(ChatTools.ShowReceiptLines, In(new
+        {
+            source = "Groceries",
+            lines = new[] { new { line = 1, text = "LAYS ALL DRESSED", code = "060410079591", readable = true } },
+        }));
+        Assert.False(r.IsError, r.Json);
+        Assert.Equal("Groceries", session.Title);
+        Assert.False(ChatTools.All.Single(t => t.Name == ChatTools.ShowReceiptLines).Strict);
+    }
+
     private static Dictionary<string, JsonElement> In(object o) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(o))!;
 }

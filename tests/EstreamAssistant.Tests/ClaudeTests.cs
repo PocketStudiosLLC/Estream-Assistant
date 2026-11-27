@@ -45,6 +45,20 @@ public class ChatToolsTests
         int unions = strict.Sum(t => Unions(JsonDocument.Parse(t.SchemaJson).RootElement));
         Assert.True(strict.Count <= 18, $"{strict.Count} strict tools (limit 20)");
         Assert.True(unions <= 15, $"{unions} nullable/union parameters across all tools (API limit 16)");
+
+        // The compiled grammar also has a size limit: v0.2.1's 39 strict properties worked, v0.2.2's 44 failed
+        // EVERY request with "The compiled grammar is too large". Stay at or under the known-good size.
+        static int Props(JsonElement s)
+        {
+            int n = 0;
+            if (s.ValueKind != JsonValueKind.Object) return 0;
+            if (s.TryGetProperty("properties", out var props))
+                foreach (var p in props.EnumerateObject()) n += 1 + Props(p.Value);
+            if (s.TryGetProperty("items", out var items)) n += Props(items);
+            return n;
+        }
+        int total = strict.Sum(t => Props(JsonDocument.Parse(t.SchemaJson).RootElement));
+        Assert.True(total <= 39, $"{total} properties across the strict schemas (39 is known to work, 44 failed)");
     }
 
     [Fact]
@@ -643,6 +657,18 @@ public sealed class ClaudeChatServiceTests : IDisposable
         Assert.StartsWith("Claude couldn't handle that message.", ex.Message);
         Assert.DoesNotContain("tool_use", ex.Message);
         Assert.DoesNotContain("{", ex.Message);
+    }
+
+    [Fact]
+    public async Task A_tool_schema_rejection_says_the_app_needs_an_update()
+    {
+        // v0.2.2 on the store PC (Bugs list, 2026-11-27): every message failed with this.
+        _responses.Enqueue("HTTP 400\n" + """{"type":"error","error":{"type":"invalid_request_error","message":"The compiled grammar is too large, which would cause performance issues. Simplify your tool schemas or reduce the number of strict tools."},"request_id":"req_011ChUCL1Lp661au55gG9kgJ"}""");
+        var svc = Make(out _);
+        var ex = await Assert.ThrowsAsync<ChatException>(() => svc.SendAsync("hi", null, CancellationToken.None));
+        Assert.Contains("install the next update", ex.Message);
+        Assert.DoesNotContain("grammar", ex.Message);
+        Assert.DoesNotContain("Start a new chat", ex.Message);
     }
 
     [Fact]

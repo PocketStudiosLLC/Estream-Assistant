@@ -12,6 +12,8 @@ namespace EstreamAssistant.Core.Claude;
 /// Strict-schema limits per request (all tools together): 20 strict tools, 24 optional parameters,
 /// 16 parameters with union/nullable types. Going over makes EVERY chat request fail with a 400,
 /// so ChatToolsTests keeps a margin. Prefer a sentinel (e.g. 0) over a new nullable parameter.
+/// There is also an undocumented limit on the compiled grammar's size ("The compiled grammar is too large"): v0.2.1's
+/// 39 strict properties worked, v0.2.2's 44 failed every request. Big or growing schemas go non-strict.
 /// </summary>
 public static class ChatTools
 {
@@ -241,7 +243,7 @@ public static class ChatTools
                 "bottom":{"type":"integer","description":"Where the line ends on that picture: percent of its height from the top, 0-100; 0 if not known."}
               },"required":["line","text","code","qty","case_price","unit_price","line_total","readable","upc","note","picture","top","bottom"],"additionalProperties":false}}
             },"required":["source","store","date","lines"],"additionalProperties":false}
-            """),
+            """, Strict: false), // too big for the strict grammar (v0.2.2 failed every request); ToolExecutor checks every value
         new(PriceReceiptLines,
             "Receipts: work out proposed selling prices for receipt table lines from their new unit cost, e.g. when the owner says " +
             "'30% markup on the chips'. Shows the prices in the receipt table; it does not stage them. Then tell the owner the prices (Now -> New) " +
