@@ -41,7 +41,8 @@ public class PendingReceiptsTests : IDisposable
             L(4, "Qwzx Widget 220g", "999000111222", 1, 55.20m),       // no item
             L(5, "HEINZ KETCH?? 1L", readable: false),                 // unreadable
             L(6, "LAYS ALL DRESSED 220G", "060410079591", null, 55.20m), // no quantity
-            L(7, "POPCORN 220G", "5551112223", 1, 30m),                // 1 × 1 case size: check it
+            L(7, "POPCORN 220G", "5551112223", 1, 30m) with { LineTotal = 360m }, // 1 × $30 but the total is $360: check it
+            L(8, "POPCORN 220G", "5551112223", 3, 30m),                // 1 × 1 case size alone: not a question
         ]);
         var q = ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets);
 
@@ -53,6 +54,7 @@ public class PendingReceiptsTests : IDisposable
         Assert.Equal(QuestionKind.Quantity, q[2].Kind);
         Assert.Equal(QuestionKind.Confirm, q[3].Kind);
         Assert.Contains("adds 1 unit", q[3].Text);
+        Assert.Contains("line total", q[3].Detail);
 
         // Answers: scan, read the row, type the quantity, correct the units.
         await s.UpdateLineAsync(4, i => i with { Upc = "060410079591" });
@@ -63,6 +65,45 @@ public class PendingReceiptsTests : IDisposable
         var popcorn = s.Lines.Single(l => l.Number == 7);
         Assert.Equal(12, popcorn.ReceivedUnits);
         Assert.Contains("counted by the owner", popcorn.ReceivedMath);
+    }
+
+    [Fact]
+    public async Task A_store_receipt_of_single_items_asks_only_what_the_chat_would()
+    {
+        // Bugs list, v0.2.3: a Superstore receipt saved for later asked about every row. Items bought one at a time
+        // are 1 pack × 1 unit in eStream, which is normal; that alone isn't a question (the chat didn't ask either).
+        var (s, _) = Make();
+        await s.SetLinesAsync("Superstore",
+        [
+            L(1, "POPCORN 220G", "5551112223", 2, 4.49m) with { LineTotal = 8.98m },
+            L(2, "POPCORN 220G", "5551112223", 1, 4.49m),
+            L(3, "Qwzx Widget 220g", "999000111222", 1, 3.99m),
+        ]);
+        var q = ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets);
+        Assert.Equal([3], q.Select(x => x.Line));
+        Assert.Equal(2, s.Lines.Single(l => l.Number == 1).ReceivedUnits); // the count read off the receipt is used
+    }
+
+    [Fact]
+    public async Task An_item_scanned_three_times_is_asked_once_and_one_scan_answers_all_three()
+    {
+        var (s, _) = Make();
+        await s.SetLinesAsync("Superstore",
+        [
+            L(2, "QWZX WIDGET 220G", "999000111222", 1, 55.20m),
+            L(3, "LAYS ALL DRESSED 220G", "060410079591", 2, 55.20m),
+            L(5, "QWZX WIDGET 220G", "999000111222", 1, 55.20m),
+            L(7, "Qwzx  Widget 220g", "0999000111222", 1, 55.20m),
+        ]);
+        var q = Assert.Single(ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets));
+        Assert.Equal(2, q.Line);
+        Assert.Equal([5, 7], q.Also);
+        Assert.Equal([2, 5, 7], q.Lines);
+        Assert.Equal("Scan the barcode for rows 2, 5 and 7 on the receipt (the same item, 3 times): 'QWZX WIDGET 220G'", q.Text);
+        Assert.True(q.Covers(7) && !q.Covers(3));
+
+        foreach (var n in q.Lines) await s.UpdateLineAsync(n, i => i with { Upc = "060410079591" });
+        Assert.Empty(ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets));
     }
 
     [Fact]

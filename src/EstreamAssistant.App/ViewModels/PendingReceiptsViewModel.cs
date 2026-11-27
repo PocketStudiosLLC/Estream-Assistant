@@ -337,17 +337,17 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
 
         if (advanceFrom is int from)
             _currentLine = (_questions.FirstOrDefault(q => q.Line > from) ?? _questions.FirstOrDefault())?.Line ?? 0;
-        var question = _questions.FirstOrDefault(q => q.Line == _currentLine);
+        var question = _questions.FirstOrDefault(q => q.Covers(_currentLine));
 
         Rows.Clear();
         foreach (var l in lines)
-            Rows.Add(new SavedRowViewModel(l, _questions.FirstOrDefault(q => q.Line == l.Number),
+            Rows.Add(new SavedRowViewModel(l, _questions.FirstOrDefault(q => q.Covers(l.Number)),
                 onSheet.TryGetValue(l.Number, out var sheet) ? (true, sheet) : default) { IsCurrent = l.Number == _currentLine });
 
         foreach (var p in Pictures) p.Highlights.Clear();
         foreach (var l in lines)
         {
-            var q = _questions.FirstOrDefault(x => x.Line == l.Number);
+            var q = _questions.FirstOrDefault(x => x.Covers(l.Number));
             if ((q is null && l.Number != _currentLine) || !l.Input.HasPosition || l.Input.Picture > Pictures.Count) continue;
             Pictures[l.Input.Picture - 1].Highlights.Add(new HighlightViewModel(l.Number, l.Input.Top, l.Input.Bottom,
                 q?.Text ?? $"Row {l.Number}") { IsCurrent = l.Number == _currentLine });
@@ -357,7 +357,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         if (!IsRenaming) NameText = _open.Title;
         var done = lines.Count(l => onSheet.ContainsKey(l.Number));
         var ready = lines.Count(l => !onSheet.ContainsKey(l.Number) && !l.Input.Skipped && l.Item is { Inactive: false } && l.ReceivedUnits > 0
-                                     && _questions.All(q => q.Line != l.Number));
+                                     && _questions.All(q => !q.Covers(l.Number)));
         OpenSummary = string.Join(" · ", new[]
         {
             $"{lines.Count} rows",
@@ -455,7 +455,8 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
             FocusAnswerRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
-        await ChangeAsync(q.Line, change);
+        // One barcode or pick answers every row with the same item.
+        await ChangeAsync(q.Kind is QuestionKind.ScanBarcode or QuestionKind.PickItem ? q.Lines : [q.Line], change);
     }
 
     [RelayCommand]
@@ -463,7 +464,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
 
     /// <summary>The row won't go on a stock sheet (not delivered, not stocked, or not in eStream).</summary>
     [RelayCommand]
-    private Task LeaveOut() => Question is { } q ? ChangeAsync(q.Line, i => i with { Skipped = true }) : Task.CompletedTask;
+    private Task LeaveOut() => Question is { } q ? ChangeAsync(q.Lines, i => i with { Skipped = true }) : Task.CompletedTask;
 
     [RelayCommand]
     private Task PutBack(SavedRowViewModel? row) =>
@@ -471,7 +472,8 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
 
     [RelayCommand]
     private Task Pick(ReceiptCandidateViewModel? c) =>
-        c is null ? Task.CompletedTask : ChangeAsync(c.Line, i => i with { Upc = c.Candidate.Upc.ToString(CultureInfo.InvariantCulture) });
+        c is null ? Task.CompletedTask : ChangeAsync(Question is { } q && q.Covers(c.Line) ? q.Lines : [c.Line],
+            i => i with { Upc = c.Candidate.Upc.ToString(CultureInfo.InvariantCulture) });
 
     /// <summary>Later: on to the next question; this one stays.</summary>
     [RelayCommand]
@@ -483,7 +485,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
     private void Move(int step)
     {
         if (_questions.Count == 0) return;
-        var i = _questions.ToList().FindIndex(q => q.Line == _currentLine);
+        var i = _questions.ToList().FindIndex(q => q.Covers(_currentLine));
         i = i < 0 ? 0 : (i + step + _questions.Count) % _questions.Count;
         _currentLine = _questions[i].Line;
         Status = "";
@@ -500,21 +502,25 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         RefreshOpen();
     }
 
-    private async Task ChangeAsync(int line, Func<ReceiptLineInput, ReceiptLineInput> change, bool advance = true)
+    private Task ChangeAsync(int line, Func<ReceiptLineInput, ReceiptLineInput> change, bool advance = true) =>
+        ChangeAsync([line], change, advance);
+
+    private async Task ChangeAsync(IEnumerable<int> lines, Func<ReceiptLineInput, ReceiptLineInput> change, bool advance = true)
     {
         if (_session is null || _open is null) return;
+        var rows = lines.ToList();
         try
         {
-            await _session.UpdateLineAsync(line, change);
+            foreach (var line in rows) await _session.UpdateLineAsync(line, change);
             Save();
         }
         catch (Exception ex)
         {
-            _log.Error($"Saved receipt {_open.Id}: updating row {line} failed", ex);
+            _log.Error($"Saved receipt {_open.Id}: updating rows {string.Join(",", rows)} failed", ex);
             Status = "Couldn't update that row: " + ex.Message;
             return;
         }
-        RefreshOpen(advance ? line : null);
+        RefreshOpen(advance ? rows.Max() : null);
     }
 
     private void Save()
