@@ -558,20 +558,42 @@ public sealed class ClaudeChatService : IChatService
     private ChatException Friendly(Exception ex)
     {
         _log?.Error("Claude request failed", ex);
-        return ex switch
-        {
-            ChatException c => c,
-            AnthropicUnauthorizedException => new("Claude didn't accept the API key. Check it in Settings.", ex),
-            AnthropicForbiddenException => new("This API key isn't allowed to use that model. Check Settings.", ex),
-            AnthropicRateLimitException => new("Claude is busy right now (rate limit). Wait a minute and try again.", ex),
-            AnthropicOverloadedException or Anthropic5xxException or AnthropicServiceUnavailableException =>
-                new("Claude's service is having trouble right now. Try again in a minute.", ex),
-            AnthropicBadRequestException => new("Claude couldn't read that request. Start a new chat and try again. " +
-                $"If it keeps happening, the reason is: {Trim(ex.Message, 300)}", ex),
-            AnthropicIOException or HttpRequestException or TaskCanceledException =>
-                new("Can't reach Claude. Check the internet connection.", ex),
-            _ => new("Something went wrong talking to Claude. The details are in the app log.", ex),
-        };
+        return new(FriendlyText(ex), ex);
+    }
+
+    /// <summary>
+    /// What to tell the store owner when a request fails: what happened and what to do, in plain words.
+    /// The API's own wording (JSON, status codes, request ids) only goes to the app log and the Bugs list.
+    /// </summary>
+    internal static string FriendlyText(Exception ex)
+    {
+        if (ex is ChatException c) return c.Message;
+        var why = ex.Message;
+        bool Says(params string[] words) => words.Any(w => why.Contains(w, StringComparison.OrdinalIgnoreCase));
+
+        if (ex is AnthropicPaymentRequiredException || Says("credit balance", "billing", "spend limit", "usage limit"))
+            return "The Claude account has run out of credit, so Claude can't answer right now. Whoever pays for " +
+                   "the Claude account needs to add credit at console.anthropic.com (under Plans & Billing).";
+        if (ex is AnthropicApiException && Says("on hold"))
+            return "The Claude account is on hold, so Claude can't answer. Whoever runs the Claude account needs " +
+                   "to check it at console.anthropic.com.";
+        if (ex is AnthropicUnauthorizedException) return "Claude didn't accept the API key. Check it in Settings.";
+        if (ex is AnthropicForbiddenException) return "This API key isn't allowed to use that model. Check Settings.";
+        if (ex is AnthropicRateLimitException)
+            return "Claude is busy right now (too many messages at once). Wait a minute and try again.";
+        if (ex is AnthropicOverloadedException or Anthropic5xxException or AnthropicServiceUnavailableException
+                or AnthropicGatewayTimeoutException)
+            return "Claude's service is having trouble right now. Try again in a minute.";
+        if (ex is AnthropicContentTooLargeException || Says("prompt is too long", "too many tokens", "context window", "request too large"))
+            return "This chat has got too long for Claude. Start a new chat. If you sent receipts, send fewer at a time.";
+        if (ex is AnthropicApiException && Says("image", "pdf", "document"))
+            return "Claude couldn't open one of the attached files. Try a clearer or smaller copy, or a different file.";
+        if (ex is AnthropicIOException or HttpRequestException or TaskCanceledException)
+            return "Can't reach Claude. Check the internet connection.";
+        if (ex is AnthropicBadRequestException)
+            return "Claude couldn't handle that message. Start a new chat and try again. If it keeps happening, " +
+                   "send in the Bugs list.";
+        return "Something went wrong talking to Claude. If it keeps happening, send in the Bugs list.";
     }
 
     private static string Trim(string s, int max) => s.Length <= max ? s : s[..max] + "…";

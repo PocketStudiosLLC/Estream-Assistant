@@ -311,6 +311,14 @@ public sealed class ClaudeChatServiceTests : IDisposable
             lock (Requests) Requests.Add((ctx.Request.Headers["anthropic-beta"] ?? "", JsonDocument.Parse(body)));
             var sse = _responses.Count > 0 ? _responses.Dequeue() : "";
             ctx.Response.ContentType = "text/event-stream";
+            if (sse.StartsWith("HTTP ", StringComparison.Ordinal))
+            {
+                // "HTTP 400\n{json}": an API error instead of a stream.
+                var nl = sse.IndexOf('\n');
+                ctx.Response.StatusCode = int.Parse(sse[5..nl]);
+                ctx.Response.ContentType = "application/json";
+                sse = sse[(nl + 1)..];
+            }
             var bytes = Encoding.UTF8.GetBytes(sse);
             await ctx.Response.OutputStream.WriteAsync(bytes);
             ctx.Response.Close();
@@ -609,6 +617,31 @@ public sealed class ClaudeChatServiceTests : IDisposable
         var ex = await Assert.ThrowsAsync<ChatException>(() => svc.SendAsync("hi", null, CancellationToken.None));
         Assert.False(string.IsNullOrWhiteSpace(ex.Message));
         Assert.Equal(0, svc.HistoryCount);
+    }
+
+    [Fact]
+    public async Task Out_of_credit_is_told_in_plain_words()
+    {
+        // The real response from the store PC (Bugs list, 2026-11-27).
+        _responses.Enqueue("HTTP 400\n" + """{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_011ChTx9tZct7E2acAUwtfx2"}""");
+        var svc = Make(out _);
+        var ex = await Assert.ThrowsAsync<ChatException>(() => svc.SendAsync("hi", null, CancellationToken.None));
+        Assert.Contains("run out of credit", ex.Message);
+        Assert.Contains("console.anthropic.com", ex.Message);
+        foreach (var raw in new[] { "{", "Status Code", "BadRequest", "req_", "invalid_request" })
+            Assert.DoesNotContain(raw, ex.Message);
+        Assert.Equal(0, svc.HistoryCount);
+    }
+
+    [Fact]
+    public async Task Other_bad_requests_hide_the_api_wording()
+    {
+        _responses.Enqueue("HTTP 400\n" + """{"type":"error","error":{"type":"invalid_request_error","message":"messages.1: tool_use ids were found without tool_result blocks"},"request_id":"req_1"}""");
+        var svc = Make(out _);
+        var ex = await Assert.ThrowsAsync<ChatException>(() => svc.SendAsync("hi", null, CancellationToken.None));
+        Assert.StartsWith("Claude couldn't handle that message.", ex.Message);
+        Assert.DoesNotContain("tool_use", ex.Message);
+        Assert.DoesNotContain("{", ex.Message);
     }
 
     [Fact]
