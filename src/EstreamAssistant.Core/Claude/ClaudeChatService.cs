@@ -29,6 +29,12 @@ public interface IChatService
     bool IsConfigured { get; }
     /// <summary>Adds app context (e.g. a scan) to the start of the next owner message.</summary>
     void AddContextNote(string note);
+    /// <summary>
+    /// These receipts have no more uses (every line on a posted stock sheet, or finished by the owner): take their
+    /// pictures out of the chat at the start of the next message, so they aren't sent again with every message after.
+    /// Returns true if any of them still had pictures in the chat.
+    /// </summary>
+    bool DropReceiptPictures(IEnumerable<ReceiptFile> files);
     void Reset();
     Task<ChatTurnResult> SendAsync(string ownerText, IProgress<ChatEvent>? progress, CancellationToken ct) =>
         SendAsync(ownerText, [], progress, ct);
@@ -54,6 +60,10 @@ public sealed class ClaudeChatService : IChatService
     public const string FallbackBeta = "server-side-fallback-2026-07-01";
     public const int MaxToolRounds = 8;
     public const int MaxAttachments = 8;
+    /// <summary>Pictures in one message once long receipts are cut into strips (the API allows 100).</summary>
+    public const int MaxPictures = 48;
+    /// <summary>Raw bytes of receipts in one message; base64 adds a third and the request limit is 32 MB.</summary>
+    public const long MaxAttachmentBytes = 20_000_000;
 
     private readonly Func<string?> _apiKey;
     private readonly AppSettings _settings;
@@ -63,6 +73,10 @@ public sealed class ClaudeChatService : IChatService
     private readonly List<BetaMessageParam> _history = [];
     private readonly List<string> _notes = [];
     private readonly SemaphoreSlim _turnLock = new(1, 1);
+    /// <summary>Where each sent receipt's pictures are: the history message and its picture blocks.</summary>
+    private readonly Dictionary<ReceiptFile, (int Message, List<int> Blocks)> _sentPictures = [];
+    /// <summary>Receipts done with; their pictures go at the start of the next message (between turns).</summary>
+    private readonly HashSet<ReceiptFile> _dropPending = [];
     private AnthropicClient? _client;
     private string? _clientKey;
     /// <summary>Model of the last completed turn (a switch means a cold cache, not a problem).</summary>
@@ -115,8 +129,78 @@ public sealed class ClaudeChatService : IChatService
             ? new Route(s.ReceiptModel.Trim(), s.ReceiptEffort, true)
             : new Route(s.Model.Trim(), s.Effort, false);
 
+    public bool DropReceiptPictures(IEnumerable<ReceiptFile> files)
+    {
+        bool any = false;
+        lock (_sentPictures)
+            foreach (var f in files)
+                if (_sentPictures.ContainsKey(f) && _dropPending.Add(f)) any = true;
+        return any;
+    }
+
+    internal const string PicturesRemovedNote =
+        "[receipt pictures removed to save tokens: every line of this receipt is on a posted stock sheet, or the owner finished it. " +
+        "Its lines are in the receipt table. To look at the receipt itself again, ask the owner to attach it again.]";
+    internal const string PictureRemovedMark = "[picture removed]";
+
+    /// <summary>
+    /// Swaps the pictures of receipts that are done with for a short note (the first picture) and a tiny mark (the
+    /// rest, so the other blocks keep their places). The pictures went with every message (16,000+ tokens for a long
+    /// receipt cut into strips), and the receipt table holds what was read.
+    /// Editing an earlier message breaks the thinking blocks after it (preserved thinking: a 400 on newer accounts),
+    /// so those are taken out too: the text and tool calls stay. Done once, between messages, so it costs one cold
+    /// cache. Returns the number of pictures removed.
+    /// </summary>
+    private int ApplyPendingDrops()
+    {
+        List<(int Message, List<int> Blocks)> drops;
+        lock (_sentPictures)
+        {
+            drops = _dropPending.Where(_sentPictures.ContainsKey).Select(f => _sentPictures[f]).ToList();
+            foreach (var f in _dropPending) _sentPictures.Remove(f);
+            _dropPending.Clear();
+        }
+        if (drops.Count == 0) return 0;
+
+        int removed = 0;
+        foreach (var (msg, picBlocks) in drops)
+        {
+            if (msg >= _history.Count || !_history[msg].TryPickUser(out var user)
+                || !user.Content.TryPickBetaContentBlockParams(out var blocks)) continue;
+            var edited = blocks.ToList();
+            bool noted = false;
+            foreach (var i in picBlocks)
+            {
+                if (i >= edited.Count || !IsPicture(edited[i])) continue;
+                edited[i] = new BetaTextBlockParam { Text = noted ? PictureRemovedMark : PicturesRemovedNote };
+                noted = true;
+                removed++;
+            }
+            _history[msg] = new BetaUserMessageParam { Content = edited };
+        }
+
+        int first = drops.Min(d => d.Message);
+        for (int i = first + 1; i < _history.Count; i++)
+        {
+            if (!_history[i].TryPickAssistant(out var asst) || !asst.Content.TryPickBetaContentBlockParams(out var blocks)) continue;
+            var kept = blocks.Where(b => !b.TryPickThinking(out _) && !b.TryPickRedactedThinking(out _)).ToList();
+            if (kept.Count == blocks.Count) continue;
+            if (kept.Count == 0) kept.Add(new BetaTextBlockParam { Text = "(no reply)" });
+            _history[i] = new BetaAssistantMessageParam { Content = kept };
+        }
+        _log?.Info($"Took {removed} receipt picture(s) out of the chat (receipt done with); they won't be sent again.");
+        return removed;
+    }
+
+    private static bool IsPicture(BetaContentBlockParam b) => b.TryPickImage(out _) || b.TryPickRequestDocumentBlock(out _);
+
     public void Reset()
     {
+        lock (_sentPictures)
+        {
+            _sentPictures.Clear();
+            _dropPending.Clear();
+        }
         _history.Clear();
         _lastModel = null;
         lock (_notes) _notes.Clear();
@@ -154,12 +238,18 @@ public sealed class ClaudeChatService : IChatService
     {
         if (string.IsNullOrWhiteSpace(ownerText)) throw new ArgumentException("Message is empty.", nameof(ownerText));
         if (attachments.Count > MaxAttachments) throw new ChatException($"Send at most {MaxAttachments} receipt pages at a time.");
+        if (attachments.Sum(a => Math.Max(1, a.Parts.Count)) > MaxPictures || attachments.Sum(a => a.SentBytes) > MaxAttachmentBytes)
+            throw new ChatException("These receipts are too much for one message. Send fewer at a time.");
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
+        ApplyPendingDrops();
         int snapshot = _history.Count;
         try
         {
             var client = Client();
-            _history.Add(new BetaUserMessageParam { Content = BuildOwnerContent(ownerText, attachments) });
+            var (ownerContent, pictures) = BuildOwnerContent(ownerText, attachments);
+            _history.Add(new BetaUserMessageParam { Content = ownerContent });
+            lock (_sentPictures)
+                foreach (var (file, blocks) in pictures) _sentPictures[file] = (snapshot, blocks);
             if (_settings.DebugLogging) _log?.Info($"[debug] Owner: {ownerText}");
             var route = RouteFor(_settings, attachments.Count);
             // A warm cache only exists for the model the previous turn used.
@@ -168,7 +258,7 @@ public sealed class ClaudeChatService : IChatService
             if (snapshot > 0 && _lastModel is not null && _lastModel != route.Model)
                 _log?.Info($"Switching model {_lastModel} -> {route.Model}{(route.IsReceipt ? " (receipt)" : "")}; this message writes a fresh cache.");
             if (attachments.Count > 0)
-                _log?.Info($"Sent {attachments.Count} receipt file(s): {string.Join(", ", attachments.Select(a => $"{a.FileName} {a.MediaType} {a.SizeText}"))}");
+                _log?.Info($"Sent {attachments.Count} receipt file(s): {string.Join(", ", attachments.Select(a => $"{a.FileName} {a.MediaType} {a.SizeText}{(a.Parts.Count > 0 ? $" as {a.Parts.Count} picture(s)" : "")}"))}");
 
             decimal cost = 0;
             long cacheRead = 0;
@@ -312,15 +402,33 @@ public sealed class ClaudeChatService : IChatService
         })
         .ToList();
 
-    private List<BetaContentBlockParam> BuildOwnerContent(string ownerText, IReadOnlyList<ReceiptFile> attachments)
+    /// <summary>The owner's message, and where each receipt's pictures are in it.</summary>
+    private (List<BetaContentBlockParam> Content, List<(ReceiptFile File, List<int> Blocks)> Pictures) BuildOwnerContent(
+        string ownerText, IReadOnlyList<ReceiptFile> attachments)
     {
         var content = new List<BetaContentBlockParam>();
+        var pictures = new List<(ReceiptFile, List<int>)>();
         // Receipts go first (before the text that refers to them), each with a short label.
         for (int i = 0; i < attachments.Count; i++)
         {
             var a = attachments[i];
-            content.Add(new BetaTextBlockParam { Text = $"[receipt attached] {a.FileName} (page {i + 1} of {attachments.Count})" });
-            content.Add(AttachmentBlock(a));
+            var head = $"[receipt attached] {a.FileName} (page {i + 1} of {attachments.Count})";
+            var at = new List<int>();
+            pictures.Add((a, at));
+            if (a.Parts.Count == 0)
+            {
+                content.Add(new BetaTextBlockParam { Text = head });
+                at.Add(content.Count);
+                content.Add(AttachmentBlock(a));
+                continue;
+            }
+            content.Add(new BetaTextBlockParam { Text = a.Note.Length > 0 ? head + " " + a.Note : head });
+            foreach (var part in a.Parts)
+            {
+                if (part.Label.Length > 0) content.Add(new BetaTextBlockParam { Text = $"[{a.FileName}: {part.Label}]" });
+                at.Add(content.Count);
+                content.Add(ImageBlock(part.Data, part.MediaType));
+            }
         }
         lock (_notes)
         {
@@ -335,20 +443,23 @@ public sealed class ClaudeChatService : IChatService
         catch (Exception ex) { _log?.Error("App state for Claude failed", ex); }
         if (!string.IsNullOrWhiteSpace(state)) content.Add(new BetaTextBlockParam { Text = "[app now] " + state });
         content.Add(new BetaTextBlockParam { Text = ownerText });
-        return content;
+        return (content, pictures);
     }
 
     internal static BetaContentBlockParam AttachmentBlock(ReceiptFile a)
     {
-        var data = Convert.ToBase64String(a.Data);
         if (a.Kind == ReceiptKind.Pdf)
-            return new BetaRequestDocumentBlock { Source = new BetaBase64PdfSource { Data = data }, Title = a.FileName };
-        return new BetaImageBlockParam
+            return new BetaRequestDocumentBlock { Source = new BetaBase64PdfSource { Data = Convert.ToBase64String(a.Data) }, Title = a.FileName };
+        return ImageBlock(a.Data, a.MediaType);
+    }
+
+    internal static BetaImageBlockParam ImageBlock(byte[] bytes, string mediaType) =>
+        new()
         {
             Source = new BetaBase64ImageSource
             {
-                Data = data,
-                MediaType = a.MediaType switch
+                Data = Convert.ToBase64String(bytes),
+                MediaType = mediaType switch
                 {
                     "image/png" => MediaType.ImagePng,
                     "image/gif" => MediaType.ImageGif,
@@ -357,7 +468,6 @@ public sealed class ClaudeChatService : IChatService
                 },
             },
         };
-    }
 
     /// <summary>
     /// Converts the response back into params for the history, unchanged.
@@ -426,6 +536,9 @@ public sealed class ClaudeChatService : IChatService
     private void Rollback(int snapshot)
     {
         if (_history.Count > snapshot) _history.RemoveRange(snapshot, _history.Count - snapshot);
+        lock (_sentPictures)
+            foreach (var f in _sentPictures.Where(kv => kv.Value.Message >= snapshot).Select(kv => kv.Key).ToList())
+                _sentPictures.Remove(f);
     }
 
     private AnthropicClient Client()

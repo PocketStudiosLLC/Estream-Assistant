@@ -96,6 +96,14 @@ rewritten until Save, GM note on 1 × 1 items, double full stop, 12-digit barcod
 - [ ] A wrong sheet says "Sheet N is wrong. DON'T post it. Missing: <item names>."
 - [ ] Receipt replies and line warnings are short ("Line 4: scan the POPCORN 220 g barcode.").
 
+## v0.2.0: long receipts
+- [ ] Attach `Superstore 1.pdf` (or another long till roll): the tray says "read as N pictures" and Claude reads every
+      line, with no item counted twice or lost at a cut.
+- [ ] A phone photo of a long receipt (taller than twice its width) is cut into strips too.
+- [ ] A typed (emailed) PDF invoice still goes as a PDF.
+- [ ] Pictures leave the chat only after every line is on a POSTED stock sheet (the chat says so), not when the sheet
+      is only made; the next message's cost in the app log drops.
+
 ## Still to build after testing
 - [ ] Stop after current item and "row x of N" (needs progress output from the scripts).
 - [x] Publish-EsStockSheet.ps1 RESULT line + exit 1, Invoke-EsCsv.ps1 moving Inbox files (done on the store PC in

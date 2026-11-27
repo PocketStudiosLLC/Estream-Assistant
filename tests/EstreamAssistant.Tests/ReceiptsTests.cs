@@ -10,15 +10,22 @@ using EstreamAssistant.Core.Settings;
 namespace EstreamAssistant.Tests;
 
 /// <summary>Stands in for Windows imaging: returns a fixed result.</summary>
-internal sealed class FakeShrinker((byte[], string)? result = null, bool fail = false) : IImageShrinker
+internal sealed class FakeShrinker((byte[], string)? result = null, bool fail = false, StripResult? strips = null) : IImageShrinker
 {
     public int Calls { get; private set; }
+    public int StripCalls { get; private set; }
     public (byte[] Data, string MediaType)? Shrink(byte[] data, string mediaType, int maxEdge)
     {
         Calls++;
-        Assert.Equal(ReceiptIngest.MaxEdgePx, maxEdge);
         if (fail) throw new InvalidOperationException("not an image");
         return result;
+    }
+
+    public StripResult? Strips(byte[] data, string mediaType)
+    {
+        StripCalls++;
+        if (fail) throw new InvalidOperationException("not an image");
+        return strips;
     }
 }
 
@@ -183,6 +190,35 @@ public class ReceiptSessionTests : IDisposable
     private static ReceiptLineInput L(int n, string text, string? code = null, decimal? qty = null, decimal? casePrice = null,
         decimal? unitPrice = null, decimal? total = null, bool readable = true, string? upc = null) =>
         new() { Line = n, Text = text, Code = code, Qty = qty, CasePrice = casePrice, UnitPrice = unitPrice, LineTotal = total, Readable = readable, Upc = upc };
+
+    [Fact]
+    public async Task A_receipt_is_done_with_only_when_every_line_is_on_a_posted_sheet()
+    {
+        var (s, _) = Make();
+        await s.SetLinesAsync("Superstore",
+        [
+            L(1, "LAYS ALL DRESSED 220G", "060410079591", 2, 55.20m),
+            L(2, "COKE 2L 8PK", "67000000409", 3, 21.60m),
+            L(3, "HEINZ KETCH?? 1L", readable: false), // a question for the owner
+        ]);
+        static EstreamAssistant.Core.Counts.StockSheetRecord Sheet(int id, bool posted) => new() { SheetId = id, Posted = posted };
+
+        Assert.False(s.IsDoneWith([]));
+        // Sheet made for the lines that were ready, but not posted yet.
+        s.MarkOnStockSheet([1, 2], 10812);
+        Assert.False(s.IsDoneWith([Sheet(10812, posted: false)]));
+        // Posted, but line 3 is still waiting on the owner.
+        Assert.False(s.IsDoneWith([Sheet(10812, posted: true)]));
+        // The owner sorted line 3 out; it went on a second sheet. Done only once that one is posted too.
+        s.MarkOnStockSheet([3], 10813);
+        Assert.False(s.IsDoneWith([Sheet(10812, true), Sheet(10813, false)]));
+        Assert.True(s.IsDoneWith([Sheet(10812, true), Sheet(10813, true)]));
+        // A sheet whose number wasn't read back can't be checked: keep the receipt.
+        s.MarkOnStockSheet([3], null);
+        Assert.False(s.IsDoneWith([Sheet(10812, true), Sheet(10813, true)]));
+        s.Finish();
+        Assert.False(s.IsDoneWith([Sheet(10812, true)]));
+    }
 
     /// <summary>Phase 5 acceptance: a sample receipt gives correct unit costs, and unreadable lines are flagged.</summary>
     [Fact]
@@ -394,5 +430,163 @@ public class ReceiptToolTests : IDisposable
         var r = await new ToolExecutor(lookup, new AppSettings()).ExecuteAsync(ChatTools.ShowReceiptLines,
             In(new { source = "x", lines = new[] { Line(1, "A", null, 1m) } }));
         Assert.True(r.IsError);
+    }
+}
+
+public class ReceiptStripsTests
+{
+    /// <summary>A white till roll w wide with a black text line every `pitch` rows (lineH tall), between margins.</summary>
+    private static byte[] Roll(int w, int h, int pitch = 36, int lineH = 24, int left = 60, int right = 60, int topBlank = 0)
+    {
+        var g = new byte[w * h];
+        Array.Fill(g, (byte)245);
+        for (int y = topBlank; y < h; y++)
+            if ((y - topBlank) % pitch < lineH)
+                for (int x = left; x < w - right; x += 3) g[y * w + x] = 10;
+        return g;
+    }
+
+    [Fact]
+    public void Short_pictures_are_sent_whole()
+    {
+        Assert.Null(ReceiptStrips.Plan(Roll(1000, 1500), 1000, 1500, 1000));
+    }
+
+    [Fact]
+    public void Long_receipts_are_cut_between_lines_at_full_size()
+    {
+        int w = 1275, h = 13974, pitch = 36, lineH = 24;
+        var plan = ReceiptStrips.Plan(Roll(w, h, pitch, lineH, left: 100, right: 300), w, h, w)!;
+        Assert.NotNull(plan);
+        Assert.False(plan.Overlaps);
+        Assert.Equal(1.0, plan.Scale);
+        // Margins trimmed to the print (100..975) plus a little.
+        Assert.InRange(plan.X, 60, 100);
+        Assert.InRange(plan.X + plan.Width, 975, 1010);
+        Assert.InRange(plan.Strips.Count, 3, 8);
+        for (int i = 0; i < plan.Strips.Count; i++)
+        {
+            var s = plan.Strips[i];
+            Assert.True(s.Height <= ReceiptStrips.MaxEdge);
+            Assert.True((long)s.Height * plan.Width <= ReceiptStrips.MaxPixels);
+            if (i > 0)
+            {
+                // Each strip starts where the last ended, on a blank row between text lines.
+                Assert.Equal(plan.Strips[i - 1].Y + plan.Strips[i - 1].Height, s.Y);
+                Assert.True(s.Y % pitch >= lineH, $"cut at {s.Y} is inside a line");
+            }
+        }
+        Assert.Equal(h, plan.Strips[^1].Y + plan.Strips[^1].Height);
+    }
+
+    [Fact]
+    public void Solid_print_with_no_gaps_overlaps_the_strips()
+    {
+        int w = 800, h = 9000;
+        var plan = ReceiptStrips.Plan(Roll(w, h, pitch: 10, lineH: 10), w, h, w)!;
+        Assert.True(plan.Overlaps);
+        for (int i = 1; i < plan.Strips.Count; i++)
+            Assert.True(plan.Strips[i].Y < plan.Strips[i - 1].Y + plan.Strips[i - 1].Height);
+    }
+
+    [Fact]
+    public void Very_long_receipts_are_shrunk_to_a_limited_number_of_strips()
+    {
+        int w = 1200, h = 80_000;
+        var plan = ReceiptStrips.Plan(Roll(w, h), w, h, w)!;
+        Assert.True(plan.Strips.Count <= ReceiptStrips.MaxStrips);
+        Assert.True(plan.Scale < 1.0);
+        foreach (var s in plan.Strips)
+        {
+            Assert.True(s.Height * plan.Scale <= ReceiptStrips.MaxEdge + 1);
+            Assert.True(s.Height * plan.Scale * plan.Width * plan.Scale <= ReceiptStrips.MaxPixels * 1.01);
+        }
+    }
+}
+
+public class ScannedPdfTests
+{
+    internal static readonly byte[] Scan1 = [0xFF, 0xD8, 0xFF, 0xE0, 1, 2, (byte)'e', (byte)'n', (byte)'d', 0xFF, 0xD9];
+    internal static readonly byte[] Scan2 = [0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9];
+
+    /// <summary>A minimal PDF like a scanner writes: each page draws one JPEG.</summary>
+    internal static byte[] Pdf(string imageFilter = "/DCTDecode", bool font = false, bool indirectLength = false, params byte[][] scans)
+    {
+        var ms = new MemoryStream();
+        void W(string s) => ms.Write(Encoding.Latin1.GetBytes(s));
+        W("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        W($"2 0 obj\n<< /Type /Pages /Count {scans.Length} >>\nendobj\n");
+        int n = 3;
+        foreach (var scan in scans)
+        {
+            int page = n++, img = n++, content = n++, len = n++;
+            W($"{page} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 306 3353] /Resources << /XObject << /Im0 {img} 0 R >>{(font ? " /Font << /F1 9 0 R >>" : "")} >> /Contents {content} 0 R >>\nendobj\n");
+            W($"{img} 0 obj\n<< /Type /XObject /Subtype /Image /Width 1275 /Height 13974 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter {imageFilter} /Length {(indirectLength ? $"{len} 0 R" : scan.Length.ToString())} >>\nstream\n");
+            ms.Write(scan);
+            W("\nendstream\nendobj\n");
+            var draw = "q 306 0 0 3353 0 0 cm /Im0 Do Q";
+            W($"{content} 0 obj\n<< /Length {draw.Length} >>\nstream\n{draw}\nendstream\nendobj\n");
+            W($"{len} 0 obj\n{scan.Length}\nendobj\n");
+        }
+        W("trailer\n<< /Root 1 0 R >>\n%%EOF\n");
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public void Takes_the_jpeg_out_of_each_scanned_page()
+    {
+        var pages = ScannedPdf.Pages(Pdf(scans: [Scan1, Scan2]))!;
+        Assert.Equal(2, pages.Count);
+        Assert.Equal(Scan1, pages[0]);
+        Assert.Equal(Scan2, pages[1]);
+        Assert.Equal(Scan1, ScannedPdf.Pages(Pdf(indirectLength: true, scans: [Scan1]))![0]);
+    }
+
+    [Fact]
+    public void Leaves_other_pdfs_alone()
+    {
+        Assert.Null(ScannedPdf.Pages(Pdf(font: true, scans: [Scan1])));
+        Assert.Null(ScannedPdf.Pages(Pdf(imageFilter: "/FlateDecode", scans: [Scan1])));
+        Assert.Null(ScannedPdf.Pages("%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nendobj\n2 0 obj\n<< /Length 30 >>\nstream\nBT /F1 12 Tf (Hello) Tj ET\n\nendstream\nendobj\n"u8.ToArray()));
+        Assert.Null(ScannedPdf.Pages(ReceiptIngestTests.Pdf));
+    }
+
+    [Fact]
+    public void A_scanned_long_receipt_is_sent_as_labelled_strips()
+    {
+        byte[] a = [0xFF, 0xD8, 1], b = [0xFF, 0xD8, 2];
+        var shrinker = new FakeShrinker(strips: new StripResult([(a, "image/jpeg"), (b, "image/jpeg")], Overlaps: false));
+        var f = new ReceiptIngest(shrinker).FromBytes("Superstore.pdf", Pdf(scans: [Scan1]), ReceiptOrigin.File);
+        Assert.Equal(ReceiptKind.Pdf, f.Kind);
+        Assert.Equal(2, f.Parts.Count);
+        Assert.Equal(a, f.Parts[0].Data);
+        Assert.Equal("strip 1 of 2", f.Parts[0].Label);
+        Assert.Equal("strip 2 of 2", f.Parts[1].Label);
+        Assert.Contains("ONE item", f.Note);
+        Assert.DoesNotContain("overlap", f.Note);
+    }
+
+    [Fact]
+    public void A_scanned_normal_page_is_sent_as_a_picture_and_a_bad_scan_falls_back_to_the_pdf()
+    {
+        var f = new ReceiptIngest(new FakeShrinker()).FromBytes("inv.pdf", Pdf(scans: [Scan1, Scan2]), ReceiptOrigin.File);
+        Assert.Equal(["page 1 of 2", "page 2 of 2"], f.Parts.Select(p => p.Label));
+        Assert.Equal("", f.Note);
+
+        var bad = new ReceiptIngest(new FakeShrinker(fail: true)).FromBytes("inv.pdf", Pdf(scans: [Scan1]), ReceiptOrigin.File);
+        Assert.Empty(bad.Parts);
+        Assert.Equal(ReceiptKind.Pdf, bad.Kind);
+    }
+
+    [Fact]
+    public void A_long_photo_is_cut_and_overlaps_are_mentioned()
+    {
+        byte[] a = [0xFF, 0xD8, 1], b = [0xFF, 0xD8, 2], c = [0xFF, 0xD8, 3];
+        var shrinker = new FakeShrinker(strips: new StripResult([(a, "image/jpeg"), (b, "image/jpeg"), (c, "image/jpeg")], Overlaps: true));
+        var f = new ReceiptIngest(shrinker).FromBytes("roll.jpg", ReceiptIngestTests.Jpeg, ReceiptOrigin.File);
+        Assert.Equal(ReceiptKind.Image, f.Kind);
+        Assert.Equal(ReceiptIngestTests.Jpeg, f.Data);
+        Assert.Equal(3, f.Parts.Count);
+        Assert.Contains("count it once", f.Note);
     }
 }

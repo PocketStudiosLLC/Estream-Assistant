@@ -16,21 +16,36 @@ public enum ReceiptOrigin
     Paste,
 }
 
+/// <summary>One picture sent to Claude for a receipt: the whole photo, or one strip or page of it.</summary>
+/// <param name="Label">How the picture is labelled for Claude, e.g. "strip 2 of 6"; empty for a single picture.</param>
+public sealed record ReceiptPart(byte[] Data, string MediaType, string Label = "");
+
 /// <summary>
 /// One receipt or invoice ready to send to Claude: an image (already downscaled) or a PDF.
-/// <see cref="Data"/> is exactly what gets sent.
+/// <see cref="Data"/> is the file itself (shown as the thumbnail, and saved for pasted pictures). What gets sent is
+/// <see cref="Parts"/> when the app cut the receipt into strips or took the scans out of a PDF, otherwise Data.
 /// </summary>
 public sealed record ReceiptFile(string FileName, string MediaType, byte[] Data, ReceiptOrigin Origin, string? SourcePath)
 {
     public ReceiptKind Kind => MediaType == ReceiptIngest.PdfType ? ReceiptKind.Pdf : ReceiptKind.Image;
-    public string SizeText => Data.Length >= 1024 * 1024
-        ? (Data.Length / 1024d / 1024d).ToString("0.0", CultureInfo.InvariantCulture) + " MB"
-        : (Data.Length / 1024) + " KB";
+
+    /// <summary>The pictures sent instead of Data (empty: send Data as it is).</summary>
+    public IReadOnlyList<ReceiptPart> Parts { get; init; } = [];
+
+    /// <summary>Told to Claude with the receipt when it is sent in parts (how they fit together).</summary>
+    public string Note { get; init; } = "";
+
+    /// <summary>Bytes that go to Claude.</summary>
+    public long SentBytes => Parts.Count > 0 ? Parts.Sum(p => (long)p.Data.Length) : Data.Length;
+
+    public string SizeText => SentBytes >= 1024 * 1024
+        ? (SentBytes / 1024d / 1024d).ToString("0.0", CultureInfo.InvariantCulture) + " MB"
+        : (SentBytes / 1024) + " KB";
 }
 
 public sealed class ReceiptException(string friendlyMessage) : Exception(friendlyMessage);
 
-/// <summary>Downscales a photo. Implemented in the WPF app (Windows imaging); a fake in tests.</summary>
+/// <summary>Downscales and cuts up photos. Implemented in the WPF app (Windows imaging); a fake in tests.</summary>
 public interface IImageShrinker
 {
     /// <summary>
@@ -39,7 +54,16 @@ public interface IImageShrinker
     /// Throws if the bytes aren't a readable image.
     /// </summary>
     (byte[] Data, string MediaType)? Shrink(byte[] data, string mediaType, int maxEdge);
+
+    /// <summary>
+    /// A long receipt cut into strips Claude can read (see <see cref="ReceiptStrips"/>), or null when the picture
+    /// isn't long and can be sent whole. Throws if the bytes aren't a readable image.
+    /// </summary>
+    StripResult? Strips(byte[] data, string mediaType);
 }
+
+/// <summary>The strips of one long picture, top to bottom.</summary>
+public sealed record StripResult(IReadOnlyList<(byte[] Data, string MediaType)> Strips, bool Overlaps);
 
 /// <summary>
 /// Drag/drop, paste and folder input for receipts (spec F5.1, F5.2).
@@ -95,11 +119,17 @@ public sealed class ReceiptIngest(IImageShrinker shrinker)
         {
             if (bytes.Length > MaxPdfBytes)
                 throw new ReceiptException($"{fileName} is too big to send ({bytes.Length / 1024 / 1024} MB). Save fewer pages, or take photos.");
-            return new ReceiptFile(fileName, type, bytes, origin, sourcePath);
+            var file = new ReceiptFile(fileName, type, bytes, origin, sourcePath);
+            return ScannedPdf.Pages(bytes) is { } scans ? FromScans(file, scans) : file;
         }
 
         (byte[] Data, string MediaType)? shrunk;
-        try { shrunk = shrinker.Shrink(bytes, type, MaxEdgePx); }
+        StripResult? strips;
+        try
+        {
+            shrunk = shrinker.Shrink(bytes, type, MaxEdgePx);
+            strips = shrinker.Strips(bytes, type);
+        }
         catch (Exception ex) when (ex is not ReceiptException)
         {
             throw new ReceiptException($"{fileName} couldn't be opened as a picture.");
@@ -107,8 +137,63 @@ public sealed class ReceiptIngest(IImageShrinker shrinker)
         var (data, mediaType) = shrunk ?? (bytes, type);
         if (data.Length > MaxImageBytes)
             throw new ReceiptException($"{fileName} is still too big after shrinking. Try a smaller photo.");
-        return new ReceiptFile(fileName, mediaType, data, origin, sourcePath);
+        var photo = new ReceiptFile(fileName, mediaType, data, origin, sourcePath);
+        if (strips is null || strips.Strips.Count < 2 || strips.Strips.Any(p => p.Data.Length > MaxImageBytes)) return photo;
+        var parts = Label(strips.Strips.Select(s => (s, 0)).ToList(), 1);
+        return photo with { Parts = parts, Note = StripNote(parts.Count, 1, strips.Overlaps) };
     }
+
+    /// <summary>
+    /// A scanner's PDF: send its scans as pictures (long ones in strips), so Claude reads them at full size instead
+    /// of a whole till roll squeezed onto one page. If a scan can't be decoded, the PDF goes as it is.
+    /// </summary>
+    private ReceiptFile FromScans(ReceiptFile pdf, IReadOnlyList<byte[]> scans)
+    {
+        var pictures = new List<((byte[] Data, string MediaType) Picture, int Page)>();
+        bool overlaps = false;
+        try
+        {
+            for (int i = 0; i < scans.Count; i++)
+            {
+                if (shrinker.Strips(scans[i], "image/jpeg") is { } s)
+                {
+                    overlaps |= s.Overlaps;
+                    pictures.AddRange(s.Strips.Select(p => (p, i + 1)));
+                }
+                else pictures.Add((shrinker.Shrink(scans[i], "image/jpeg", ReceiptStrips.MaxEdge) ?? (scans[i], "image/jpeg"), i + 1));
+            }
+        }
+        catch (Exception)
+        {
+            return pdf;
+        }
+        if (pictures.Any(p => p.Picture.Data.Length > MaxImageBytes)) return pdf;
+        var parts = Label(pictures, scans.Count);
+        bool cut = pictures.Count > scans.Count;
+        return pdf with { Parts = parts, Note = cut ? StripNote(parts.Count, scans.Count, overlaps) : "" };
+    }
+
+    /// <summary>"strip 2 of 6", "page 2 of 3", or "page 2 of 3, strip 1 of 4".</summary>
+    private static List<ReceiptPart> Label(IReadOnlyList<((byte[] Data, string MediaType) Picture, int Page)> pictures, int pages)
+    {
+        var parts = new List<ReceiptPart>();
+        for (int i = 0; i < pictures.Count; i++)
+        {
+            var (pic, page) = pictures[i];
+            int inPage = pictures.Count(p => p.Page == page);
+            int nth = pictures.Take(i + 1).Count(p => p.Page == page);
+            var pagePart = pages > 1 ? $"page {page} of {pages}" : "";
+            var stripPart = inPage > 1 ? $"strip {nth} of {inPage}" : "";
+            parts.Add(new ReceiptPart(pic.Data, pic.MediaType, string.Join(", ", new[] { pagePart, stripPart }.Where(s => s.Length > 0))));
+        }
+        return parts;
+    }
+
+    private static string StripNote(int parts, int pages, bool overlaps) =>
+        $"This is a long receipt{(pages > 1 ? $" ({pages} pages)" : "")}, so the app cut it into {parts} pictures, in order from the top. " +
+        "Each strip carries straight on from the one before: an item whose lines (code, description, quantity, price) run across a cut is ONE item. " +
+        "Number the lines through the whole receipt." +
+        (overlaps ? " Some cuts overlap, so a line at the bottom of one strip can show again at the top of the next: count it once." : "");
 }
 
 /// <summary>

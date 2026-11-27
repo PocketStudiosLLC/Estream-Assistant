@@ -12,6 +12,7 @@ public sealed class AttachmentViewModel(ReceiptFile file)
     public ReceiptFile File { get; } = file;
     public string Name => File.FileName;
     public string Detail => (File.Kind == ReceiptKind.Pdf ? "PDF" : "photo") + " · " + File.SizeText
+        + (File.Parts.Count > 1 ? $" · read as {File.Parts.Count} pictures" : "")
         + (File.Origin == ReceiptOrigin.Inbox ? " · Receipts folder" : "");
     public ImageSource? Thumb { get; } = WpfImageShrinker.Thumbnail(file);
     public bool IsPdf => File.Kind == ReceiptKind.Pdf;

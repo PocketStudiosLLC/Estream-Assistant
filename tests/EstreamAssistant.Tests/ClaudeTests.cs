@@ -466,6 +466,66 @@ public sealed class ClaudeChatServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Pictures_of_a_finished_receipt_are_not_sent_again()
+    {
+        _responses.Enqueue(ToolUseTurn());
+        _responses.Enqueue(TextTurn("I read 3 lines."));
+        _responses.Enqueue(TextTurn("Sheet 10812 made."));
+        _responses.Enqueue(TextTurn("Done."));
+        var svc = Make(out _);
+        var photo = new EstreamAssistant.Core.Receipts.ReceiptFile("pepsi.jpg", "image/jpeg", [0xFF, 0xD8, 0xFF, 1],
+            EstreamAssistant.Core.Receipts.ReceiptOrigin.File, null);
+
+        await svc.SendAsync("read this", [photo], null, CancellationToken.None);
+        // Not done with yet: the picture is still sent.
+        await svc.SendAsync("make a stock sheet", null, CancellationToken.None);
+        Assert.Equal("image", Requests[2].Body.RootElement.GetProperty("messages")[0].GetProperty("content")[1].GetProperty("type").GetString());
+
+        var other = photo with { FileName = "other.jpg", Data = [0xFF, 0xD8, 0xFF, 2] };
+        Assert.False(svc.DropReceiptPictures([other])); // never sent: nothing to take out
+        Assert.True(svc.DropReceiptPictures([photo]));
+        Assert.False(svc.DropReceiptPictures([photo])); // already on its way out
+        await svc.SendAsync("thanks", null, CancellationToken.None);
+
+        var msgs = Requests[3].Body.RootElement.GetProperty("messages");
+        var first = msgs[0].GetProperty("content");
+        var types = Enumerable.Range(0, first.GetArrayLength()).Select(i => first[i].GetProperty("type").GetString()).ToList();
+        Assert.DoesNotContain("image", types);
+        Assert.Contains(Enumerable.Range(0, first.GetArrayLength()), i =>
+            first[i].GetProperty("type").GetString() == "text" && first[i].GetProperty("text").GetString() == ClaudeChatService.PicturesRemovedNote);
+        // The thinking after the edit is taken out (it would no longer match the history); the tool call stays.
+        var asst = msgs[1].GetProperty("content");
+        Assert.Equal(1, asst.GetArrayLength());
+        Assert.Equal("tool_use", asst[0].GetProperty("type").GetString());
+        var last = msgs[msgs.GetArrayLength() - 1].GetProperty("content");
+        Assert.Equal("thanks", last[last.GetArrayLength() - 1].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task A_receipt_cut_into_strips_goes_as_a_note_then_labelled_pictures()
+    {
+        _responses.Enqueue(TextTurn("I read 40 lines."));
+        var svc = Make(out _);
+        var roll = new EstreamAssistant.Core.Receipts.ReceiptFile("Superstore 1.pdf", "application/pdf", "%PDF-1.4"u8.ToArray(),
+            EstreamAssistant.Core.Receipts.ReceiptOrigin.File, null)
+        {
+            Parts = [new([0xFF, 0xD8, 1], "image/jpeg", "strip 1 of 2"), new([0xFF, 0xD8, 2], "image/jpeg", "strip 2 of 2")],
+            Note = "This is a long receipt.",
+        };
+
+        await svc.SendAsync("make a stock sheet", [roll], null, CancellationToken.None);
+
+        var content = Requests[0].Body.RootElement.GetProperty("messages")[0].GetProperty("content");
+        Assert.Equal("[receipt attached] Superstore 1.pdf (page 1 of 1) This is a long receipt.", content[0].GetProperty("text").GetString());
+        Assert.Equal("[Superstore 1.pdf: strip 1 of 2]", content[1].GetProperty("text").GetString());
+        Assert.Equal("image", content[2].GetProperty("type").GetString());
+        Assert.Equal(Convert.ToBase64String([0xFF, 0xD8, 1]), content[2].GetProperty("source").GetProperty("data").GetString());
+        Assert.Equal("[Superstore 1.pdf: strip 2 of 2]", content[3].GetProperty("text").GetString());
+        Assert.Equal("image", content[4].GetProperty("type").GetString());
+        Assert.DoesNotContain(Enumerable.Range(0, content.GetArrayLength()), i => content[i].GetProperty("type").GetString() == "document");
+    }
+
+    [Fact]
     public async Task Photos_use_the_receipt_model_for_the_whole_turn_and_text_goes_back_to_the_chat_model()
     {
         _responses.Enqueue(TextTurn("Hi."));

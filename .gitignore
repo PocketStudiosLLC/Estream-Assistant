@@ -24,3 +24,5 @@ PhaseC-handoff/
 Handoff/
 # Store-PC test results (reports, app and engine logs with store data)
 complete/
+# Real receipts used for testing (names, order numbers): keep private
+Superstore*.pdf

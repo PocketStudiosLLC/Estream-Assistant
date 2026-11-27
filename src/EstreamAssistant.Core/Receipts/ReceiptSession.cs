@@ -299,6 +299,19 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
     }
 
     /// <summary>After a stock sheet was made from these lines: they can't go on another sheet.</summary>
+    /// <summary>
+    /// The receipt has no more uses, so its pictures can leave the chat: it has lines, and every one of them is on
+    /// a stock sheet that has been POSTED (inactive items aside, which can't go on a sheet). A line still waiting on
+    /// the owner (an item to pick, a line nobody could read, no match) can't go on a sheet, so it keeps the receipt.
+    /// </summary>
+    public bool IsDoneWith(IEnumerable<Counts.StockSheetRecord> sheets)
+    {
+        var posted = sheets.Where(s => s.Posted && s.SheetId is not null).Select(s => s.SheetId!.Value).ToHashSet();
+        lock (_gate)
+            return _lines.Count > 0 && _lines.Values.All(l => l.Status == ReceiptLineStatus.Inactive
+                || (_onSheet.TryGetValue(l.Number, out var id) && id is int sheet && posted.Contains(sheet)));
+    }
+
     public void MarkOnStockSheet(IEnumerable<int> lineNumbers, int? sheetId)
     {
         lock (_gate) foreach (var n in lineNumbers) _onSheet[n] = sheetId;

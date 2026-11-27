@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using EstreamAssistant.Core.Receipts;
@@ -7,6 +8,7 @@ namespace EstreamAssistant.App.Services;
 /// <summary>
 /// F5.2: downscales receipt photos to about 1600 px on the long edge with Windows imaging,
 /// and turns phone photos upright (EXIF orientation) so Claude reads them the right way up.
+/// Long receipts are cut into strips at full size instead (<see cref="ReceiptStrips"/>).
 /// </summary>
 public sealed class WpfImageShrinker : IImageShrinker
 {
@@ -45,6 +47,48 @@ public sealed class WpfImageShrinker : IImageShrinker
         }
         var opaque = new FormatConvertedBitmap(src, PixelFormats.Bgr24, null, 0);
         return (Encode(new JpegBitmapEncoder { QualityLevel = 85 }, opaque), "image/jpeg");
+    }
+
+    public StripResult? Strips(byte[] data, string mediaType)
+    {
+        BitmapFrame frame;
+        try
+        {
+            using var ms = new MemoryStream(data);
+            frame = BitmapDecoder.Create(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
+        }
+        catch (Exception) when (mediaType is "image/webp" or "image/gif")
+        {
+            return null; // no codec: Shrink sends the original
+        }
+
+        BitmapSource src = frame;
+        var rotate = Orientation(frame);
+        if (rotate != 0) src = new TransformedBitmap(src, new RotateTransform(rotate));
+        // Decode once; every strip is cropped from this.
+        src = new CachedBitmap(new FormatConvertedBitmap(src, PixelFormats.Bgr24, null, 0), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+
+        int w = src.PixelWidth, h = src.PixelHeight;
+        if (h <= 2 * w && w <= 2 * h) return null; // not long: skip reading the pixels
+        int stride = (w + 3) & ~3;
+        var gray = new byte[stride * h];
+        new FormatConvertedBitmap(src, PixelFormats.Gray8, null, 0).CopyPixels(gray, stride, 0);
+        var plan = ReceiptStrips.Plan(gray, w, h, stride);
+        if (plan is null) return null;
+
+        var strips = new List<(byte[], string)>();
+        foreach (var s in plan.Strips)
+        {
+            BitmapSource strip = new CroppedBitmap(src, new Int32Rect(plan.X, s.Y, plan.Width, s.Height));
+            if (plan.Scale < 1.0) strip = new TransformedBitmap(strip, new ScaleTransform(plan.Scale, plan.Scale));
+            if (mediaType == "image/png")
+            {
+                var png = Encode(new PngBitmapEncoder(), strip);
+                if (png.Length <= ReceiptIngest.MaxImageBytes) { strips.Add((png, "image/png")); continue; }
+            }
+            strips.Add((Encode(new JpegBitmapEncoder { QualityLevel = 88 }, strip), "image/jpeg"));
+        }
+        return new StripResult(strips, plan.Overlaps);
     }
 
     private static byte[] Encode(BitmapEncoder encoder, BitmapSource src)

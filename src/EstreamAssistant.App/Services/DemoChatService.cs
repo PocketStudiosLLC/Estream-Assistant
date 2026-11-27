@@ -16,6 +16,7 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
 {
     public bool IsConfigured => true;
     public void AddContextNote(string note) { }
+    public bool DropReceiptPictures(IEnumerable<ReceiptFile> files) => false;
     public void Reset() { }
     public Task TestConnectionAsync(CancellationToken ct) => Task.CompletedTask;
 

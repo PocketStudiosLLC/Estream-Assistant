@@ -20,10 +20,18 @@ public sealed partial class MainViewModel
     {
         _receipt = session;
         _counts = counts;
-        if (counts is not null) counts.Changed += (_, _) => OnUi(() => ReceiptStockSheetCommand.NotifyCanExecuteChanged());
+        if (counts is not null) counts.Changed += (_, _) => OnUi(() =>
+        {
+            ReceiptStockSheetCommand.NotifyCanExecuteChanged();
+            DropPicturesIfDone();
+        });
         _ingest = ingest;
         _receiptFolder = folder;
-        session.Changed += (_, _) => OnUi(RefreshReceipt);
+        session.Changed += (_, _) => OnUi(() =>
+        {
+            RefreshReceipt();
+            DropPicturesIfDone();
+        });
         folder.FileArrived += (_, path) => OnUi(() => _ = AttachPathsAsync([path], ReceiptOrigin.Inbox, announce: true));
         Attachments.CollectionChanged += (_, _) =>
         {
@@ -240,6 +248,19 @@ public sealed partial class MainViewModel
         _chat.AddContextNote($"[owner made a stock sheet from the receipt] {run.Message}");
     }
 
+    /// <summary>
+    /// Once every line of the receipt is on a POSTED stock sheet (no questions left, stock added), its pictures
+    /// leave the chat so they stop costing tokens on every message. Not before: while a line still needs the
+    /// owner, Claude may need to look at the receipt again.
+    /// </summary>
+    private void DropPicturesIfDone()
+    {
+        if (_receipt is null || _counts is null || !_receipt.IsDoneWith(_counts.Sheets)) return;
+        if (_chat.DropReceiptPictures(_receipt.Files))
+            Add(FeedKind.App, "Every line of this receipt is on a posted stock sheet, so its pictures leave the chat " +
+                              "with your next message (saves tokens). The receipt table stays.");
+    }
+
     private bool CanFinishReceipt() => HasReceipt && !IsWorking;
 
     /// <summary>F5.8: closes the receipt and files it in Receipts\Done.</summary>
@@ -250,7 +271,10 @@ public sealed partial class MainViewModel
         if (!Confirm("Finish receipt", "Close this receipt and move it to Receipts\\Done?\n\nPending changes stay in the list."))
             return;
         var moved = new List<string>();
-        foreach (var f in _receipt.Finish())
+        var files = _receipt.Finish();
+        // Finished by the owner: no more uses, so its pictures leave the chat too.
+        _chat.DropReceiptPictures(files);
+        foreach (var f in files)
         {
             try { moved.Add(Path.GetFileName(_receiptFolder.MarkHandled(f, DateTime.Now))); }
             catch (Exception ex)
