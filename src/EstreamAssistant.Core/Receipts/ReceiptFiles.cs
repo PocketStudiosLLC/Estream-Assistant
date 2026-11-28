@@ -155,12 +155,16 @@ public sealed class ReceiptIngest(IImageShrinker shrinker)
         {
             for (int i = 0; i < scans.Count; i++)
             {
-                if (shrinker.Strips(scans[i], "image/jpeg") is { } s)
+                // Fax-style scans come as TIFF: always re-encoded (Claude doesn't take TIFF), as sharp PNG.
+                var type = ScannedPdf.IsTiff(scans[i]) ? "image/tiff" : "image/jpeg";
+                if (shrinker.Strips(scans[i], type) is { } s)
                 {
                     overlaps |= s.Overlaps;
                     pictures.AddRange(s.Strips.Select(p => (p, i + 1)));
                 }
-                else pictures.Add((shrinker.Shrink(scans[i], "image/jpeg", ReceiptStrips.MaxEdge) ?? (scans[i], "image/jpeg"), i + 1));
+                else if (shrinker.Shrink(scans[i], type, ReceiptStrips.MaxEdge) is { } shrunk) pictures.Add((shrunk, i + 1));
+                else if (type == "image/jpeg") pictures.Add(((scans[i], type), i + 1));
+                else return pdf;
             }
         }
         catch (Exception)

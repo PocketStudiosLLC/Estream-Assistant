@@ -9,6 +9,7 @@ using CommunityToolkit.Mvvm.Input;
 using EstreamAssistant.Core.Counts;
 using EstreamAssistant.Core.Data;
 using EstreamAssistant.Core.Logging;
+using EstreamAssistant.App.Services;
 using EstreamAssistant.Core.Receipts;
 
 namespace EstreamAssistant.App.ViewModels;
@@ -201,9 +202,12 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
     public ObservableCollection<SavedPictureViewModel> Pictures { get; } = [];
     public ObservableCollection<SavedRowViewModel> Rows { get; } = [];
     public bool HasPictures => Pictures.Count > 0;
-    /// <summary>A typed PDF (sent to Claude as a PDF): there's no picture to show, only the file to open.</summary>
-    public bool HasPdfOnly => _open is not null && Pictures.Count == 0 && _open.Files.Any(f => f.StoredAs.Length > 0);
-    public bool NoPictures => _open is not null && Pictures.Count == 0 && !HasPdfOnly;
+    /// <summary>A PDF the app couldn't draw in the receipt box: only the file to open.</summary>
+    public bool HasPdfOnly => _open is not null && Pictures.Count == 0 && !_drawingPdf && _open.Files.Any(f => f.StoredAs.Length > 0);
+    public bool NoPictures => _open is not null && Pictures.Count == 0 && !_drawingPdf && !HasPdfOnly;
+    /// <summary>The receipt's PDF is being drawn into the receipt box.</summary>
+    public bool DrawingPdf => _drawingPdf;
+    private bool _drawingPdf;
 
     /// <summary>Picture zoom: 1 = fit the width.</summary>
     [ObservableProperty] private double _zoom = 1.0;
@@ -311,6 +315,9 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         Status = "";
         Pictures.Clear();
         foreach (var p in record.Pictures) Pictures.Add(new SavedPictureViewModel(Load(_saved.PicturePath(record, p)), p.Label));
+        // No pictures were saved (a PDF sent to Claude as it is): draw the PDF's pages in the receipt box instead.
+        var pdf = Pictures.Count == 0 ? record.Files.FirstOrDefault(f => f.StoredAs.Length > 0 && f.MediaType == ReceiptIngest.PdfType) : null;
+        _drawingPdf = pdf is not null;
         _currentLine = 0;
         RefreshOpen(advanceFrom: 0);
         OnPropertyChanged(nameof(HasOpen));
@@ -318,13 +325,31 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         OnPropertyChanged(nameof(HasPictures));
         OnPropertyChanged(nameof(HasPdfOnly));
         OnPropertyChanged(nameof(NoPictures));
+        OnPropertyChanged(nameof(DrawingPdf));
         FinishCommand.NotifyCanExecuteChanged();
+        DeleteCommand.NotifyCanExecuteChanged();
+        if (pdf is not null && _saved.OriginalPath(record, pdf) is { } path) await ShowPdfAsync(record, path);
+    }
+
+    private async Task ShowPdfAsync(SavedReceipt record, string path)
+    {
+        var pages = await Task.Run(() => PdfPictures.PagesAsync(path, (m, ex) => _log.Error(m, ex)));
+        if (_open?.Id != record.Id) return; // another receipt was opened meanwhile
+        _drawingPdf = false;
+        for (int i = 0; i < pages.Count; i++)
+            Pictures.Add(new SavedPictureViewModel(pages[i], pages.Count > 1 ? $"page {i + 1} of {pages.Count}" : ""));
+        OnPropertyChanged(nameof(HasPictures));
+        OnPropertyChanged(nameof(HasPdfOnly));
+        OnPropertyChanged(nameof(NoPictures));
+        OnPropertyChanged(nameof(DrawingPdf));
+        RefreshOpen();
     }
 
     private void Close()
     {
         _session = null;
         _open = null;
+        _drawingPdf = false;
         _questions = [];
         Question = null;
         Pictures.Clear();
@@ -338,6 +363,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         OnPropertyChanged(nameof(NoPictures));
         OnPropertyChanged(nameof(ShowAllDone));
         FinishCommand.NotifyCanExecuteChanged();
+        DeleteCommand.NotifyCanExecuteChanged();
         MakeStockSheetCommand.NotifyCanExecuteChanged();
     }
 
@@ -393,6 +419,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         Question = question;
         MakeStockSheetCommand.NotifyCanExecuteChanged();
         FinishCommand.NotifyCanExecuteChanged();
+        DeleteCommand.NotifyCanExecuteChanged();
         if (question is not null) FocusAnswerRequested?.Invoke(this, EventArgs.Empty);
     }
 
@@ -600,6 +627,43 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         {
             _log.Error($"Finishing saved receipt {_open.Id} failed", ex);
             Status = "Couldn't file the receipt: " + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Deletes the receipt from the Pending tab (a mistake, a duplicate, or one that won't be done). Stock sheets
+    /// already made from it stay in eStream; the receipt's file goes to Receipts\Done so the scan isn't lost.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanFinish))]
+    private void Delete()
+    {
+        if (_open is null || _session is null) return;
+        // Deleting the receipt never touches eStream: say which of its stock sheets are still waiting to be posted,
+        // so a sheet nobody wants doesn't get posted by mistake later.
+        var onSheets = _session.LinesOnStockSheets.Values.OfType<int>().Distinct().Order().ToList();
+        var posted = onSheets.Where(id => _counts?.Sheets.Any(s => s.SheetId == id && s.Posted) == true).ToList();
+        var waiting = onSheets.Except(posted).ToList();
+        static string Sheets(IReadOnlyList<int> ids) => ids.Count == 1 ? $"Stock sheet {ids[0]} is" : $"Stock sheets {string.Join(", ", ids)} are";
+        var note =
+            (waiting.Count > 0
+                ? $"\n\n{Sheets(waiting)} still waiting in eStream. If you don't want {(waiting.Count == 1 ? "it" : "them")}, delete " +
+                  $"{(waiting.Count == 1 ? "it" : "them")} in eStream (Inventory > Stock Sheets) so nobody posts {(waiting.Count == 1 ? "it" : "them")} by mistake."
+                : "") +
+            (posted.Count > 0 ? $"\n\n{Sheets(posted)} already posted: that stock stays added." : "");
+        if (!Confirm("Delete receipt", $"Delete {_open.Title} from the Pending tab? Your answers for it are lost and Claude can't look up its prices any more.{note}"))
+            return;
+        try
+        {
+            var title = _open.Title;
+            var filed = _saved.Discard(_open.Id, _folder, DateTime.Now);
+            Selected = null;
+            Status = $"Deleted {title}." + (filed.Count > 0 ? $" Its file is in Receipts\\Done: {string.Join(", ", filed)}." : "")
+                + (waiting.Count > 0 ? $" {Sheets(waiting)} still in eStream, not posted: delete {(waiting.Count == 1 ? "it" : "them")} there if not wanted." : "");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _log.Error($"Deleting saved receipt {_open.Id} failed", ex);
+            Status = "Couldn't delete the receipt: " + ex.Message;
         }
     }
 

@@ -622,10 +622,12 @@
                                 <TextBlock Text="RECEIPT" Style="{StaticResource SectionTitle}" />
                             </DockPanel>
                             <StackPanel DockPanel.Dock="Top" Visibility="{Binding HasPdfOnly, Converter={StaticResource Visible}}" Margin="0,8">
-                                <TextBlock Text="This receipt is a PDF with typed text, so there's no picture to show here. Open it beside this window to check the rows."
+                                <TextBlock Text="This PDF can't be shown here. Open it beside this window to check the rows."
                                            TextWrapping="Wrap" Foreground="{StaticResource Muted}" />
                                 <Button Content="Open the PDF" Command="{Binding OpenOriginalCommand}" HorizontalAlignment="Left" Margin="0,8,0,0" Padding="12,3" />
                             </StackPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="Showing the PDF…" Foreground="{StaticResource Muted}" Margin="0,8"
+                                       Visibility="{Binding DrawingPdf, Converter={StaticResource Visible}}" />
                             <TextBlock DockPanel.Dock="Top" Text="No picture was saved with this receipt." Foreground="{StaticResource Muted}" Margin="0,8"
                                        Visibility="{Binding NoPictures, Converter={StaticResource Visible}}" />
                             <ScrollViewer x:Name="PendingPictureScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Visible"
@@ -682,12 +684,18 @@
                     <Border Grid.Column="2" Style="{StaticResource Card}" Visibility="{Binding HasOpen, Converter={StaticResource Visible}}">
                         <DockPanel>
                             <DockPanel DockPanel.Dock="Top">
-                                <Button DockPanel.Dock="Right" Content="Finish" Command="{Binding FinishCommand}" Padding="10,2" MinHeight="26" FontSize="13" VerticalAlignment="Top"
-                                        ToolTip="Take the receipt off this tab and file it in Receipts\Done" />
+                                <!-- Rename, Finish and Delete: one row, one size -->
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                                    <Button Content="Rename" Command="{Binding StartRenameCommand}" Padding="10,2" MinHeight="26" FontSize="13" Margin="6,0,0,0"
+                                            Visibility="{Binding IsRenaming, Converter={StaticResource Hidden}}"
+                                            ToolTip="Give this receipt your own name (it's also put on the stock sheet in eStream)" />
+                                    <Button Content="Finish" Command="{Binding FinishCommand}" Padding="10,2" MinHeight="26" FontSize="13" Margin="6,0,0,0"
+                                            ToolTip="Take the receipt off this tab and file it in Receipts\Done" />
+                                    <Button Content="Delete" Command="{Binding DeleteCommand}" Padding="10,2" MinHeight="26" FontSize="13" Margin="6,0,0,0"
+                                            ToolTip="Delete this receipt from the Pending tab (its file goes to Receipts\Done)" />
+                                </StackPanel>
                                 <StackPanel>
                                     <DockPanel Visibility="{Binding IsRenaming, Converter={StaticResource Hidden}}">
-                                        <Button DockPanel.Dock="Right" Content="Rename" Command="{Binding StartRenameCommand}" Padding="8,0" MinHeight="22" FontSize="12"
-                                                Margin="6,0,6,0" VerticalAlignment="Top" ToolTip="Give this receipt your own name (it's also put on the stock sheet in eStream)" />
                                         <TextBlock Text="{Binding OpenTitle}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
                                     </DockPanel>
                                     <DockPanel Visibility="{Binding IsRenaming, Converter={StaticResource Visible}}" Margin="0,0,6,0">

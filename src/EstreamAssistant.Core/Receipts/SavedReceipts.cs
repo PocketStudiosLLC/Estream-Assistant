@@ -230,12 +230,27 @@ public sealed class SavedReceipts
         return filed;
     }
 
-    /// <summary>Thrown away by the owner: gone from the Pending tab, files and all.</summary>
-    public void Discard(string id)
+    /// <summary>
+    /// Deleted by the owner: gone from the Pending tab and from search_receipts. The receipt's own file (moved here
+    /// from the Receipts inbox) is filed in Receipts\Done first, so the scan itself isn't lost. Returns its name(s).
+    /// </summary>
+    public IReadOnlyList<string> Discard(string id, ReceiptFolder? folder = null, DateTime? now = null)
     {
-        lock (_gate) _all.RemoveAll(r => r.Id == id);
-        TryDelete(Path.Combine(PendingFolder, id));
+        var r = Get(id);
+        var dir = Path.Combine(PendingFolder, id);
+        var filed = new List<string>();
+        if (r is not null && folder is not null)
+            foreach (var f in r.Files.Where(f => f.StoredAs.Length > 0))
+            {
+                var path = Path.Combine(dir, f.StoredAs);
+                if (File.Exists(path))
+                    filed.Add(Path.GetFileName(folder.MarkHandled(new ReceiptFile(f.FileName, f.MediaType, [], ReceiptOrigin.File, path), now ?? DateTime.Now)));
+            }
+        lock (_gate) _all.RemoveAll(x => x.Id == id);
+        TryDelete(dir);
+        _log?.Info($"Saved receipt {id} deleted by the owner{(filed.Count > 0 ? "; filed " + string.Join(", ", filed) : "")}.");
         Changed?.Invoke(this, EventArgs.Empty);
+        return filed;
     }
 
     public string PicturePath(SavedReceipt r, SavedPicture p) => Path.Combine(PendingFolder, r.Id, p.File);

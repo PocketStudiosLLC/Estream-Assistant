@@ -31,7 +31,9 @@ public sealed class WpfImageShrinker : IImageShrinker
         var rotate = Orientation(frame);
         double scale = Math.Min(1.0, maxEdge / (double)Math.Max(w, h));
         bool tooBig = data.Length > ReceiptIngest.MaxImageBytes;
-        if (scale >= 1.0 && rotate == 0 && !tooBig) return null;
+        // TIFF (a fax-style scan from a PDF) always gets re-encoded: Claude doesn't take TIFF.
+        bool tiff = mediaType == "image/tiff";
+        if (scale >= 1.0 && rotate == 0 && !tooBig && !tiff) return null;
 
         BitmapSource src = frame;
         var tg = new TransformGroup();
@@ -40,9 +42,9 @@ public sealed class WpfImageShrinker : IImageShrinker
         if (tg.Children.Count > 0) src = new TransformedBitmap(src, tg);
 
         // Screenshots stay PNG (sharp text) unless that's still too big; photos become JPEG.
-        if (mediaType == "image/png")
+        if (mediaType is "image/png" or "image/tiff")
         {
-            var png = Encode(new PngBitmapEncoder(), src);
+            var png = Encode(new PngBitmapEncoder(), tiff ? new FormatConvertedBitmap(src, PixelFormats.Gray8, null, 0) : src);
             if (png.Length <= ReceiptIngest.MaxImageBytes) return (png, "image/png");
         }
         var opaque = new FormatConvertedBitmap(src, PixelFormats.Bgr24, null, 0);
@@ -81,9 +83,9 @@ public sealed class WpfImageShrinker : IImageShrinker
         {
             BitmapSource strip = new CroppedBitmap(src, new Int32Rect(plan.X, s.Y, plan.Width, s.Height));
             if (plan.Scale < 1.0) strip = new TransformedBitmap(strip, new ScaleTransform(plan.Scale, plan.Scale));
-            if (mediaType == "image/png")
+            if (mediaType is "image/png" or "image/tiff")
             {
-                var png = Encode(new PngBitmapEncoder(), strip);
+                var png = Encode(new PngBitmapEncoder(), mediaType == "image/tiff" ? new FormatConvertedBitmap(strip, PixelFormats.Gray8, null, 0) : strip);
                 if (png.Length <= ReceiptIngest.MaxImageBytes) { strips.Add((png, "image/png")); continue; }
             }
             strips.Add((Encode(new JpegBitmapEncoder { QualityLevel = 88 }, strip), "image/jpeg"));

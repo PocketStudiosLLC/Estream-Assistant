@@ -2,7 +2,9 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows 10 SDK: Windows.Data.Pdf draws typed PDF invoices on the Pending tab. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
     <!-- Lets the app compile on the Linux/macOS dev PC. It only RUNS on Windows. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
@@ -11,7 +13,7 @@
     <RootNamespace>EstreamAssistant.App</RootNamespace>
     <AssemblyName>EstreamAssistant</AssemblyName>
     <Product>eStream Assistant</Product>
-    <Version>0.2.6</Version>
+    <Version>0.2.7</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>

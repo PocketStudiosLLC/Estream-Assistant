@@ -510,6 +510,35 @@ public class ReceiptStripsTests
 
 public class ScannedPdfTests
 {
+    [Fact]
+    public void A_fax_style_scan_comes_out_as_a_tiff_with_the_same_data()
+    {
+        // Costco scans from the store's scanner: one 1-bit CCITT image per page (Group 3, K 0).
+        var fax = new byte[] { 0x00, 0x10, 0x20, 0x30, 0x40 };
+        var pdf = Encoding.Latin1.GetBytes(
+            "%PDF-1.4\n1 0 obj\n<< /Type /Page /Resources << /XObject << /Im0 2 0 R >> >> >>\nendobj\n" +
+            "2 0 obj\n<< /Type /XObject /Subtype /Image /Filter /CCITTFaxDecode /Width 1275 /Height 8922 /Length 5 " +
+            "/BitsPerComponent 1 /ColorSpace /DeviceGray /Decode [0 1] /BlackIs1 true /DecodeParms << /K 0 /Columns 1275 >> >>\nstream\n")
+            .Concat(fax).Concat(Encoding.Latin1.GetBytes("\nendstream\nendobj\n")).ToArray();
+        var page = Assert.Single(ScannedPdf.Pages(pdf)!);
+        Assert.True(ScannedPdf.IsTiff(page));
+        Assert.Equal(fax, page[^fax.Length..]);
+        ushort Tag(ushort tag)
+        {
+            int n = BitConverter.ToUInt16(page, 8);
+            for (int i = 0; i < n; i++)
+                if (BitConverter.ToUInt16(page, 10 + i * 12) == tag) return BitConverter.ToUInt16(page, 10 + i * 12 + 8);
+            throw new Xunit.Sdk.XunitException($"no tag {tag}");
+        }
+        Assert.Equal((ushort)1275, Tag(256));
+        Assert.Equal((ushort)3, Tag(259));  // CCITT Group 3
+        Assert.Equal((ushort)0, Tag(262));  // black runs show black, as PDF viewers show these scans
+
+        // Byte-aligned rows can't be said the same way in a TIFF: left as a PDF.
+        var aligned = Encoding.Latin1.GetBytes(Encoding.Latin1.GetString(pdf).Replace("/K 0", "/K 0 /EncodedByteAlign true"));
+        Assert.Null(ScannedPdf.Pages(aligned));
+    }
+
     internal static readonly byte[] Scan1 = [0xFF, 0xD8, 0xFF, 0xE0, 1, 2, (byte)'e', (byte)'n', (byte)'d', 0xFF, 0xD9];
     internal static readonly byte[] Scan2 = [0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9];
 

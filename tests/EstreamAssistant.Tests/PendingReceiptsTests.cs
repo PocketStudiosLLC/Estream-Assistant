@@ -319,6 +319,28 @@ public class PendingReceiptsTests : IDisposable
     }
 
     [Fact]
+    public async Task Deleting_a_saved_receipt_keeps_its_scan_in_receipts_done()
+    {
+        var (s, _) = Make();
+        var inbox = Directory.CreateDirectory(Path.Combine(_dir.Path, "Receipts2")).FullName;
+        var src = Path.Combine(inbox, "Costco 1.pdf");
+        File.WriteAllBytes(src, "%PDF-1.4 scan"u8.ToArray());
+        s.AddFiles([new ReceiptFile("Costco 1.pdf", ReceiptIngest.PdfType, File.ReadAllBytes(src), ReceiptOrigin.Inbox, src)]);
+        await s.SetLinesAsync("Costco", [L(1, "MYSTERY", "999000111222", 1, 5m)]);
+        var store = new SavedReceipts(Path.Combine(_dir.Path, "saved-del"));
+        var saved = store.SaveForLater(s.Source, s.Lines, s.LinesOnStockSheets, s.Files, s.PictureOf, DateTime.Now);
+        Assert.False(File.Exists(src));
+
+        var folder = new ReceiptFolder(inbox);
+        Assert.Equal(["Costco 1.pdf"], store.Discard(saved.Id, folder, DateTime.Now));
+        Assert.True(File.Exists(Path.Combine(folder.Done, "Costco 1.pdf"))); // the scan isn't lost
+        Assert.Empty(store.Pending);
+        Assert.Empty(store.Search("mystery", 10)); // gone for Claude too
+        Assert.Empty(new SavedReceipts(Path.Combine(_dir.Path, "saved-del")).All);
+        Assert.False(Directory.Exists(Path.Combine(store.PendingFolder, saved.Id)));
+    }
+
+    [Fact]
     public void Search_matches_every_word_or_an_exact_code()
     {
         var store = new SavedReceipts(Path.Combine(_dir.Path, "saved"));
