@@ -48,7 +48,7 @@ public sealed partial class ReceiptLineViewModel : ObservableObject
     public bool CanCheck => Line.CanStageCost;
     public string ReceiptText => $"{Line.Number}. {Line.Input.Text}"
         + (Line.Input.Code is { Length: > 0 } c ? $"  ·  code {c}" : "")
-        + (Line.Input.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}" : "")
+        + (Line.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}{(Line.QtyAssumed ? " (not printed)" : "")}" : "")
         + (Line.Input.CasePrice is { } cp ? $"  ·  {cp.ToString("C2", Ca)}/case" : "")
         + (Line.Input.UnitPrice is { } up ? $"  ·  {up.ToString("C2", Ca)}/unit" : "");
 

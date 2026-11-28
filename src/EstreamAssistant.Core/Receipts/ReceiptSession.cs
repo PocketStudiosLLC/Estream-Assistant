@@ -96,6 +96,13 @@ public sealed record ReceiptLine
     /// </summary>
     public decimal? ReceivedUnits { get; init; }
     public string ReceivedMath { get; init; } = "";
+    /// <summary>The quantity used: as printed, or worked out when none was printed (see <see cref="QtyAssumed"/>).</summary>
+    public decimal? Qty { get; init; }
+    /// <summary>
+    /// No count was printed: till receipts (Costco, Superstore) print one line per scan and only print a count
+    /// ("10 @ 2.59") for several rung up at once, so the line is 1, or line total ÷ price when that's whole.
+    /// </summary>
+    public bool QtyAssumed { get; init; }
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
     public int Number => Input.Line;
@@ -317,7 +324,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             else if (l.Status == ReceiptLineStatus.Unreadable) problems.Add($"Line {l.Number} couldn't be read.");
             else if (l.Item is null) problems.Add($"Line {l.Number} ({name}): no item picked.");
             else if (l.Item.Inactive) problems.Add($"Line {l.Number} ({name}) is inactive.");
-            else if (l.ReceivedUnits is not > 0) problems.Add($"Line {l.Number} ({name}): no {(l.Input.Qty is > 0 ? "case size in eStream" : "quantity")}.");
+            else if (l.ReceivedUnits is not > 0) problems.Add($"Line {l.Number} ({name}): no {(l.Qty is > 0 ? "case size in eStream" : "quantity")}.");
             else take.Add(l);
         }
 
@@ -501,7 +508,8 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             warnings.Add("No price read.");
         }
 
-        if (input.Qty is { } q && input.LineTotal is { } total && (input.CasePrice ?? input.UnitPrice) is { } each
+        var (qtyUsed, qtyAssumed) = QtyOf(input);
+        if (!qtyAssumed && input.Qty is { } q && input.LineTotal is { } total && (input.CasePrice ?? input.UnitPrice) is { } each
             && Math.Abs(q * each - total) > 0.02m)
             warnings.Add($"{N(q)} × {Money(each)} = {Money(q * each)}, but the line total is {Money(total)}. Check it.");
 
@@ -524,10 +532,12 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             receivedUnits = counted;
             receivedMath = $"{N(counted)} unit{(counted == 1 ? "" : "s")}, counted by the owner";
         }
-        else if (input.Qty is { } qty && qty > 0)
+        else if (qtyUsed is { } qty && qty > 0)
         {
             if (input.UnitPrice is not null || units == 1) { receivedUnits = qty; receivedMath = $"{N(qty)} unit{(qty == 1 ? "" : "s")}"; }
             else if (units > 1) { receivedUnits = qty * units; receivedMath = $"{N(qty)} × {N(units)} = {N(receivedUnits.Value)} units"; }
+            if (receivedUnits is not null && qtyAssumed)
+                receivedMath += qty == 1 ? " (no count printed, so 1 scanned)" : $" (no count printed; line total ÷ price = {N(qty)})";
         }
 
         var status = item.Inactive ? ReceiptLineStatus.Inactive
@@ -547,8 +557,28 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             GmAtCurrentPrice = gmNow,
             ReceivedUnits = receivedUnits,
             ReceivedMath = receivedMath,
+            Qty = qtyUsed,
+            QtyAssumed = qtyAssumed,
             Warnings = warnings,
         };
+    }
+
+    /// <summary>
+    /// The quantity for a line: as printed; else, for a line with a price but no count (one scan on a till receipt),
+    /// line total ÷ price when that's a whole number of at least 1, otherwise 1.
+    /// </summary>
+    internal static (decimal? Qty, bool Assumed) QtyOf(ReceiptLineInput input)
+    {
+        if (input.Qty is { } printed) return (printed, false);
+        var each = input.CasePrice ?? input.UnitPrice;
+        if (each is null && input.LineTotal is null) return (null, false);
+        if (each is > 0 && input.LineTotal is { } total && total > 0)
+        {
+            var n = total / each.Value;
+            var whole = Math.Round(n);
+            if (whole >= 1 && whole <= 1000 && Math.Abs(whole * each.Value - total) <= 0.02m) return (whole, true);
+        }
+        return (1, true);
     }
 
     private static readonly CultureInfo Ca = CultureInfo.GetCultureInfo("en-CA");

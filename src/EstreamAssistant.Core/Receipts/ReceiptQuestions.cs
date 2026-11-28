@@ -108,7 +108,7 @@ public static class ReceiptQuestions
         var name = Quote(item.Description);
         if (l.ReceivedUnits is not > 0)
         {
-            return l.Input.Qty is > 0
+            return l.Qty is > 0
                 ? new(l.Number, QuestionKind.Units, $"How many units came in for {row}: {name}?",
                     $"eStream doesn't say how many are in a case of {item.Description}, so the app can't work out the units.")
                 : new(l.Number, QuestionKind.Quantity, $"How many came in for {row}: {name}? Type the quantity on the receipt.",

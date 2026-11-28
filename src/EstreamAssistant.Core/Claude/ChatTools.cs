@@ -231,7 +231,7 @@ public static class ChatTools
                 "line":{"type":"integer","description":"Line number on the receipt, from 1, top to bottom."},
                 "text":{"type":"string","description":"The item description exactly as printed."},
                 "code":{"type":["string","null"],"description":"UPC or vendor item code as printed, or null."},
-                "qty":{"type":["number","null"],"description":"How many cases/units were bought, or null."},
+                "qty":{"type":["number","null"],"description":"How many cases/units were bought. On a till receipt a line with no count printed is 1 (one scan); a count line like '10 @ 2.59' above it gives 10. null only if a printed count can't be read."},
                 "case_price":{"type":["number","null"],"description":"Price of ONE case or pack before deposits and eco fees (not the line total), or null."},
                 "unit_price":{"type":["number","null"],"description":"Price of ONE selling unit, only if the receipt prints it per unit; otherwise null."},
                 "line_total":{"type":["number","null"],"description":"The line's extended total as printed, or null."},

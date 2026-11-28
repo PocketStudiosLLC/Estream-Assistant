@@ -65,7 +65,7 @@ public sealed partial class SavedRowViewModel(ReceiptLine line, ReceiptQuestion?
     public int Number => Line.Number;
     public string RowText => $"Row {Line.Number}";
     public string ReceiptText => Line.Input.Text
-        + (Line.Input.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}" : "")
+        + (Line.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}{(Line.QtyAssumed ? " (not printed)" : "")}" : "")
         + (Line.Input.CasePrice is { } cp ? $"  ·  {cp.ToString("C2", Ca)}" : Line.Input.UnitPrice is { } up ? $"  ·  {up.ToString("C2", Ca)}/unit" : "");
     public string ItemText => Line.Item is { } i ? $"{i.Description}  (UPC {i.Upc})" : "";
     public string StockText => onSheet.Yes ? $"On stock sheet {onSheet.Sheet?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)"}"

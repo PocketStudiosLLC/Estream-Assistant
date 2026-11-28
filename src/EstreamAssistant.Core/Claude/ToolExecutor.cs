@@ -506,7 +506,7 @@ public sealed class ToolExecutor
                 line = h.Line.Input.Line,
                 text = h.Line.Input.Text,
                 code = h.Line.Input.Code,
-                qty = h.Line.Input.Qty,
+                qty = Receipts.ReceiptSession.QtyOf(h.Line.Input).Qty,
                 case_price = h.Line.Input.CasePrice,
                 unit_price = h.Line.Input.UnitPrice,
                 line_total = h.Line.Input.LineTotal,

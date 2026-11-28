@@ -323,7 +323,7 @@ public sealed class PhaseCTests : IDisposable
             L(3, "LAYS ALL DRESSED", "060410079591", 1, casePrice: 55.20m),   // same item again
             L(4, "BANANAS", "4011", 12, unitPrice: 0.20m),                    // priced per unit: qty = units
             L(5, "MYSTERY", null, 3, casePrice: 9m),                          // no item
-            L(6, "KD", "68000001236", null, casePrice: 14.40m),               // no qty
+            L(6, "KD", "68000001236", null),                                  // no qty and no price
         ]);
         Assert.Equal(32m, lines[0].ReceivedUnits);
         Assert.Equal("2 × 16 = 32 units", lines[0].ReceivedMath);

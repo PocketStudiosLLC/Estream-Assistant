@@ -40,7 +40,7 @@ public class PendingReceiptsTests : IDisposable
             L(1, "LAYS ALL DRESSED 220G", "060410079591", 2, 55.20m),   // ready
             L(4, "Qwzx Widget 220g", "999000111222", 1, 55.20m),       // no item
             L(5, "HEINZ KETCH?? 1L", readable: false),                 // unreadable
-            L(6, "LAYS ALL DRESSED 220G", "060410079591", null, 55.20m), // no quantity
+            L(6, "LAYS ALL DRESSED 220G", "060410079591"),             // no quantity (and no price)
             L(7, "POPCORN 220G", "5551112223", 1, 30m) with { LineTotal = 360m }, // 1 × $30 but the total is $360: check it
             L(8, "POPCORN 220G", "5551112223", 3, 30m),                // 1 × 1 case size alone: not a question
         ]);
@@ -82,6 +82,38 @@ public class PendingReceiptsTests : IDisposable
         var q = ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets);
         Assert.Equal([3], q.Select(x => x.Line));
         Assert.Equal(2, s.Lines.Single(l => l.Number == 1).ReceivedUnits); // the count read off the receipt is used
+    }
+
+    [Fact]
+    public async Task A_till_receipt_line_with_no_count_is_one_scan()
+    {
+        // Costco 2026-10-27: one line per scan, and a count only for several rung up at once ("10 @ 2.59").
+        var (s, _) = Make();
+        await s.SetLinesAsync("Costco",
+        [
+            L(1, "POPCORN 220G", "5551112223", null, 4.49m),                              // no count: 1
+            L(2, "POPCORN 220G", "5551112223", null, 4.49m),                              // scanned again: 1
+            L(3, "POPCORN 220G", "5551112223", null, 2.59m) with { LineTotal = 25.90m },  // "10 @ 2.59" missed: 25.90 ÷ 2.59
+            L(4, "POPCORN 220G", "5551112223", null, 4.49m) with { LineTotal = 5.00m },   // total isn't a multiple: 1
+            L(5, "POPCORN 220G", "5551112223", 3, 4.49m),                                 // printed count wins
+            L(6, "POPCORN 220G", "5551112223"),                                           // no price either: ask
+        ]);
+        var units = s.Lines.ToDictionary(l => l.Number, l => l.ReceivedUnits);
+        Assert.Equal(1, units[1]);
+        Assert.Equal(1, units[2]);
+        Assert.Equal(10, units[3]);
+        Assert.Equal(1, units[4]);
+        Assert.Equal(3, units[5]);
+        Assert.Null(units[6]);
+        Assert.Contains("no count printed, so 1 scanned", s.Lines.Single(l => l.Number == 1).ReceivedMath);
+        Assert.True(s.Lines.Single(l => l.Number == 3).QtyAssumed);
+        Assert.False(s.Lines.Single(l => l.Number == 5).QtyAssumed);
+        Assert.DoesNotContain(s.Lines.Single(l => l.Number == 4).Warnings, w => w.Contains("line total"));
+
+        var q = Assert.Single(ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets));
+        Assert.Equal((6, QuestionKind.Quantity), (q.Line, q.Kind));
+        var counts = await s.ToReceivedCountsAsync([1, 2, 3, 4, 5]);
+        Assert.Equal(16, counts.Rows.Single().Count - Math.Max(0, counts.Rows.Single().SystemOnHand)); // 1 + 1 + 10 + 1 + 3
     }
 
     [Fact]
