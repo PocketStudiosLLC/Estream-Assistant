@@ -16,10 +16,16 @@ public interface IItemRepository
     Task<Item?> GetByBarcodeAsync(long upc, CancellationToken ct = default);
 
     /// <summary>
-    /// UPCs of active items whose Shelf Code (Inventory.VendorCode) is exactly <paramref name="shelfCode"/>. Test 3:
-    /// Costco receipt item numbers are the store's shelf codes, not UPCs.
+    /// UPCs of active items whose Shelf Code (Inventory.VendorCode) is <paramref name="shelfCode"/>, ignoring spaces
+    /// and leading zeros. Test 3: Costco receipt item numbers are the store's shelf codes, not UPCs.
     /// </summary>
     Task<IReadOnlyList<long>> FindByShelfCodeAsync(string shelfCode, CancellationToken ct = default);
+
+    /// <summary>
+    /// UPCs of active items that have <paramref name="code"/> as a supplier's item number (VendorItems: the vendor
+    /// item code or the vendor's shelf code), ignoring spaces and leading zeros.
+    /// </summary>
+    Task<IReadOnlyList<long>> FindBySupplierCodeAsync(string code, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<long>>([]);
 
     /// <summary>All item names for the local cache. SLOW on the store PC (~16 s).</summary>
     Task<IReadOnlyList<ItemName>> GetAllNamesAsync(CancellationToken ct = default);

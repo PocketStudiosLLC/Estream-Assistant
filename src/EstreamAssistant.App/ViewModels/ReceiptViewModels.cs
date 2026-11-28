@@ -48,7 +48,7 @@ public sealed partial class ReceiptLineViewModel : ObservableObject
     public bool CanCheck => Line.CanStageCost;
     public string ReceiptText => $"{Line.Number}. {Line.Input.Text}"
         + (Line.Input.Code is { Length: > 0 } c ? $"  ·  code {c}" : "")
-        + (Line.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}{(Line.QtyAssumed ? " (not printed)" : "")}" : "")
+        + (Line.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}" : "")
         + (Line.Input.CasePrice is { } cp ? $"  ·  {cp.ToString("C2", Ca)}/case" : "")
         + (Line.Input.UnitPrice is { } up ? $"  ·  {up.ToString("C2", Ca)}/unit" : "");
 
@@ -115,5 +115,6 @@ public sealed partial class ReceiptLineViewModel : ObservableObject
 public sealed record ReceiptCandidateViewModel(int Line, ReceiptCandidate Candidate)
 {
     public string Label => $"{Candidate.Description}  ·  {Candidate.MatchPct}%";
-    public string Detail => $"UPC {Candidate.Upc}";
+    public string Detail => $"UPC {Candidate.Upc}" + (Candidate.Facts.Length > 0 ? "  ·  " + Candidate.Facts : "")
+        + (Candidate.ClosestPrice ? "  ·  closest to the receipt price" : "");
 }

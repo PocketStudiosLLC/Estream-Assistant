@@ -43,6 +43,16 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
             // A made-up reading of a sample invoice (it doesn't look at the picture).
             progress?.Report(new ChatEvent.ToolStarted(ChatTools.ShowReceiptLines, "Matching the receipt lines to eStream items…"));
             await Task.Delay(600, ct);
+            // Dev testing of a real receipt: ESA_DEMO_LINES = a show_receipt_lines input (JSON) read by hand.
+            if (Environment.GetEnvironmentVariable("ESA_DEMO_LINES") is { Length: > 0 } linesFile && File.Exists(linesFile))
+            {
+                var input = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(linesFile))!;
+                var result = await tools.ExecuteAsync(ChatTools.ShowReceiptLines, input, ct);
+                _receiptRead = true;
+                var n = input["lines"].GetArrayLength();
+                return Reply(progress, result.IsError ? "The lines file was refused: " + result.Json
+                    : $"I read {n} lines from the receipt (from a test file, not the picture). Check the receipt table.\n\n(Demo reply: no API key used.)");
+            }
             await tools.ExecuteAsync(ChatTools.ShowReceiptLines, Args(new
             {
                 source = "Sample invoice (demo)",
@@ -148,6 +158,13 @@ public sealed class DemoChatService(ToolExecutor tools) : IChatService
         line, text, code, qty, case_price = casePrice, unit_price = unitPrice, line_total = total, readable = true, upc = (string?)null, note = (string?)null,
         picture, top = 8 + 10 * line, bottom = 13 + 10 * line,
     };
+
+    private static ChatTurnResult Reply(IProgress<ChatEvent>? progress, string reply)
+    {
+        for (int i = 0; i < reply.Length; i += 6)
+            progress?.Report(new ChatEvent.TextDelta(reply.Substring(i, Math.Min(6, reply.Length - i))));
+        return new ChatTurnResult(reply, false, false, 0, 0);
+    }
 
     private static Dictionary<string, JsonElement> Args(object o) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(o))!;

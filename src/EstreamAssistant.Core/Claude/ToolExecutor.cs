@@ -767,7 +767,11 @@ public sealed class ToolExecutor
         description = l.Item?.Description,
         matched_by = l.MatchedBy.Length > 0 ? l.MatchedBy : null,
         candidates = l.Candidates.Count > 0 && l.Status == Receipts.ReceiptLineStatus.NeedsChoice
-            ? l.Candidates.Select(c => new { upc = c.Upc.ToString(CultureInfo.InvariantCulture), description = c.Description, match_pct = c.MatchPct })
+            ? l.Candidates.Select(c => new
+            {
+                upc = c.Upc.ToString(CultureInfo.InvariantCulture), description = c.Description, match_pct = c.MatchPct,
+                facts = c.Facts.Length > 0 ? c.Facts : null, closest_to_receipt_price = c.ClosestPrice ? true : (bool?)null,
+            })
             : null,
         current_price = l.Item?.Price,
         @for = l.Item?.For,

@@ -99,7 +99,8 @@ public partial class App : Application
             ? new PowerShellStockSheetExecutor(settings.EngineFolder, paths.RunsFolder, _log)
             : new MockStockSheetExecutor(repo);
         var counts = new StockCounts(lookup, sheetExecutor, () => settings.ProtectedSheets, paths.Root, _log);
-        var receipt = new ReceiptSession(lookup, () => settings.PriceEndings);
+        var remembered = new RememberedPicks(paths.RememberedPicksFile, _log);
+        var receipt = new ReceiptSession(lookup, () => settings.PriceEndings) { Remembered = remembered };
         // F5.1/F5.8: the engine's Receipts folder on the store PC; a private one on the dev PC.
         var receiptInbox = Directory.Exists(settings.EngineFolder)
             ? Path.Combine(settings.EngineFolder, "Receipts")
@@ -124,7 +125,10 @@ public partial class App : Application
             History = new HistoryViewModel(history),
             Counts = new CountsViewModel(counts, lookup, _log),
             Reports = new ReportsViewModel(reports, _log, labels, eStreamLabels),
-            PendingReceipts = new PendingReceiptsViewModel(savedReceipts, lookup, counts, receiptFolder, _log, () => settings.PriceEndings),
+            PendingReceipts = new PendingReceiptsViewModel(savedReceipts, lookup, counts, receiptFolder, _log, () => settings.PriceEndings)
+            {
+                Remembered = remembered,
+            },
         };
         mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder, counts, savedReceipts);
         _log.Info(receiptFolder.Start() ? $"Watching {receiptFolder.Inbox} for receipts." : $"No receipts folder at {receiptFolder.Inbox}; not watching.");
@@ -285,6 +289,14 @@ public partial class App : Application
                     if (vm.PendingReceipts is { } pr && nth >= 1 && nth <= pr.Receipts.Count) pr.Selected = pr.Receipts[nth - 1];
                     await Task.Delay(1500);
                     break;
+                case "--wait" when int.TryParse(value, out var ms):
+                    await Task.Delay(ms); // --wait 8000  (lets slow loading finish before the next step)
+                    break;
+                case "--maximize":
+                    i--; // full-screen window, as on the store PC
+                    MainWindow!.WindowState = WindowState.Maximized;
+                    await Task.Delay(500);
+                    break;
                 case "--pending-rename":
                     i--; // presses Rename on the open Pending receipt
                     vm.PendingReceipts!.StartRenameCommand.Execute(null);
@@ -361,6 +373,13 @@ public partial class App : Application
             }
         }
 
+        // Dev testing of a real receipt: ESA_DEMO_ITEMS = extra mock items (JSON array of Item) like the store's.
+        if (Environment.GetEnvironmentVariable("ESA_DEMO_ITEMS") is { Length: > 0 } extraFile && File.Exists(extraFile))
+        {
+            var extra = System.Text.Json.JsonSerializer.Deserialize<List<Core.Models.Item>>(File.ReadAllText(extraFile)) ?? [];
+            _log!.Info($"Data source: built-in mock items + {extra.Count} from {extraFile}.");
+            return new MockItemRepository(MockItemRepository.SampleItems().Concat(extra)) { Delay = TimeSpan.Zero };
+        }
         _log!.Info("Data source: built-in mock items.");
         return new MockItemRepository();
     }

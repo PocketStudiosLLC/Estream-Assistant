@@ -29,7 +29,7 @@ public sealed partial class SavedReceiptCardViewModel(SavedReceipt record) : Obs
     public string Detail => $"{Record.Lines.Count} row{(Record.Lines.Count == 1 ? "" : "s")} · saved {Record.Saved:MMM d, h:mm tt}"
         + (Record.Name.Length > 0 && ReceiptNames.Title(Record.Store, Record.Date, Record.Source) is { Length: > 0 } auto ? $"\n{auto}" : "");
     public string StateText => IsDone ? "Done: ready to finish"
-        : Record.NeedsOwner > 0 ? $"{Record.NeedsOwner} row{(Record.NeedsOwner == 1 ? "" : "s")} need{(Record.NeedsOwner == 1 ? "s" : "")} you"
+        : Record.NeedsOwner > 0 ? $"{Record.NeedsOwner} to do"
         : Record.OnSheet.Count > 0 ? "Stock sheet made: post it" : "Ready for a stock sheet";
     public StatusLevel Level => IsDone ? StatusLevel.Ok : Record.NeedsOwner > 0 ? StatusLevel.Warn : StatusLevel.Unknown;
 }
@@ -65,7 +65,7 @@ public sealed partial class SavedRowViewModel(ReceiptLine line, ReceiptQuestion?
     public int Number => Line.Number;
     public string RowText => $"Row {Line.Number}";
     public string ReceiptText => Line.Input.Text
-        + (Line.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}{(Line.QtyAssumed ? " (not printed)" : "")}" : "")
+        + (Line.Qty is { } q ? $"  ·  qty {q.ToString("0.##", CultureInfo.InvariantCulture)}" : "")
         + (Line.Input.CasePrice is { } cp ? $"  ·  {cp.ToString("C2", Ca)}" : Line.Input.UnitPrice is { } up ? $"  ·  {up.ToString("C2", Ca)}/unit" : "");
     public string ItemText => Line.Item is { } i ? $"{i.Description}  (UPC {i.Upc})" : "";
     public string StockText => onSheet.Yes ? $"On stock sheet {onSheet.Sheet?.ToString(CultureInfo.InvariantCulture) ?? "(number unknown)"}"
@@ -111,6 +111,9 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
     private IReadOnlyList<ReceiptQuestion> _questions = [];
     private int _currentLine;
 
+    /// <summary>Items picked for a store's codes before (shared with the Assistant tab's receipt).</summary>
+    public RememberedPicks? Remembered { get; init; }
+
     public PendingReceiptsViewModel(SavedReceipts saved, ItemLookupService lookup, StockCounts? counts, ReceiptFolder? folder,
         AppLog log, Func<IReadOnlyCollection<int>> priceEndings)
     {
@@ -147,7 +150,9 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
     public string EmptyText => Receipts.Count == 0
         ? "Nothing is saved for later.\n\nOn the Assistant tab, press \"Save for later\" on a receipt to finish it here: " +
           "scan the barcodes and check the rows yourself, with the receipt beside the stock sheet. It doesn't use Claude."
+        : _opening.Length > 0 ? _opening
         : "Pick a receipt on the left.";
+    private string _opening = "";
 
     [ObservableProperty] private string _openTitle = "";
 
@@ -277,7 +282,9 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         if (_open?.Id == card.Id) return;
         var record = _saved.Get(card.Id);
         if (record is null) return;
-        var session = new ReceiptSession(_lookup, _priceEndings);
+        var session = new ReceiptSession(_lookup, _priceEndings) { Remembered = Remembered };
+        _opening = $"Opening {record.Title}…\nMatching its {record.Lines.Count} rows to eStream items.";
+        OnPropertyChanged(nameof(EmptyText));
         try
         {
             // Matched again: an item added or a case size fixed in eStream since the receipt was saved shows up now.
@@ -287,8 +294,15 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         catch (Exception ex)
         {
             _log.Error($"Opening saved receipt {record.Id} failed", ex);
-            Status = "Couldn't read the items from eStream. Is the database there? Try again in a moment.";
+            _opening = "Couldn't read the items from eStream. Is the database there? Pick the receipt again in a moment.";
+            OnPropertyChanged(nameof(EmptyText));
+            if (Selected?.Id == card.Id) Selected = null; // so picking it again tries again
             return;
+        }
+        finally
+        {
+            if (_opening.StartsWith("Opening", StringComparison.Ordinal)) _opening = "";
+            OnPropertyChanged(nameof(EmptyText));
         }
         if (Selected?.Id != card.Id) return; // the owner picked another one meanwhile
         _session = session;

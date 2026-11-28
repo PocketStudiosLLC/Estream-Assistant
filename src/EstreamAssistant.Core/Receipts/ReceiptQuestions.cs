@@ -73,11 +73,13 @@ public static class ReceiptQuestions
     }
 
     /// <summary>What makes two rows the same item: the printed code, else the printed name.</summary>
-    private static string? SameItemKey(ReceiptLine l)
+    private static string? SameItemKey(ReceiptLine l) => SameItemKey(l.Input);
+
+    internal static string? SameItemKey(ReceiptLineInput input)
     {
-        var code = l.Input.Code?.Trim().TrimStart('0') ?? "";
+        var code = input.Code?.Trim().TrimStart('0') ?? "";
         if (code.Length > 0) return "code:" + code;
-        var text = string.Join(' ', l.Input.Text.ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        var text = string.Join(' ', input.Text.ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries));
         return text.Length > 0 ? "text:" + text : null;
     }
 

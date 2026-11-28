@@ -438,7 +438,7 @@
                                                                                 CommandParameter="{Binding}">
                                                                             <StackPanel>
                                                                                 <TextBlock Text="{Binding Label}" FontSize="14" />
-                                                                                <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource Muted}" />
+                                                                                <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
                                                                             </StackPanel>
                                                                         </Button>
                                                                     </DataTemplate>
@@ -722,7 +722,7 @@
                                                         CommandParameter="{Binding}">
                                                     <StackPanel>
                                                         <TextBlock Text="{Binding Label}" FontSize="14" />
-                                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource Muted}" />
+                                                        <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </Button>
                                             </DataTemplate>

@@ -39,7 +39,12 @@ public sealed record SavedReceipt
     [JsonIgnore] public string Title => Name.Length > 0 ? Name
         : ReceiptNames.Title(Store, Date, Source) is { Length: > 0 } t ? t
         : $"{Files.FirstOrDefault()?.FileName ?? "Receipt"} · saved {Saved.ToString("MMM d", System.Globalization.CultureInfo.GetCultureInfo("en-CA"))}";
-    [JsonIgnore] public int NeedsOwner => Lines.Count(l => l.NeedsOwner && !OnSheet.ContainsKey(l.Input.Line));
+    /// <summary>Things left to do, counted like the Pending tab's questions: repeat scans of an item that needs its
+    /// barcode or a pick are one.</summary>
+    [JsonIgnore] public int NeedsOwner => Lines.Where(l => l.NeedsOwner && !OnSheet.ContainsKey(l.Input.Line))
+        .DistinctBy(l => l.Status is ReceiptLineStatus.NoMatch or ReceiptLineStatus.NeedsChoice && ReceiptQuestions.SameItemKey(l.Input) is { } key
+            ? key + "|" + l.Status : "line " + l.Input.Line)
+        .Count();
 }
 
 /// <summary>

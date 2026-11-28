@@ -259,8 +259,12 @@ public class ReceiptSessionTests : IDisposable
     [Fact]
     public async Task One_by_one_case_size_and_bad_totals_are_flagged()
     {
-        var single = new Item { Upc = 77000000001, Description = "WATER 24PK", Price = 6.99m, CaseCost = 4.00m, PacksPerCase = 1, UnitsPerPack = 1, UnitCost = 4.00m };
-        var (s, _) = Make([single]);
+        // 1 × 1 is only flagged when eStream has no cost to compare with (a cost that fits the receipt is normal:
+        // things bought one at a time at Costco); a case bought as "1" shows up as a big cost change instead.
+        var single = new Item { Upc = 77000000001, Description = "WATER 24PK", Price = 6.99m, PacksPerCase = 1, UnitsPerPack = 1 };
+        var costed = new Item { Upc = 77000000002, Description = "WATER 12PK", Price = 6.99m, CaseCost = 4.00m, PacksPerCase = 1, UnitsPerPack = 1, UnitCost = 4.00m };
+        var (s, _) = Make([single, costed]);
+        Assert.Equal(ReceiptLineStatus.Ready, (await s.SetLinesAsync("x", [L(9, "WATER 12PK", "77000000002", 1, 4.20m)]))[0].Status);
         var lines = await s.SetLinesAsync("x",
         [
             L(1, "WATER 24PK", "77000000001", 1, 4.20m),

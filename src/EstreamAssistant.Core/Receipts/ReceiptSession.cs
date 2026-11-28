@@ -68,7 +68,10 @@ public enum ReceiptLineStatus
     Inactive,
 }
 
-public sealed record ReceiptCandidate(long Upc, string Description, int MatchPct);
+/// <param name="Facts">What tells look-alike items apart (Costco has two MOTT'S CLAMATO - ORIGINAL): case size, price,
+/// cost, on hand, sales, last received.</param>
+/// <param name="ClosestPrice">Its case cost is the closest to the price on the receipt (and within a third of it).</param>
+public sealed record ReceiptCandidate(long Upc, string Description, int MatchPct, string Facts = "", bool ClosestPrice = false);
 
 /// <summary>A receipt line after matching and cost math (one row of the receipt table, F5.7).</summary>
 public sealed record ReceiptLine
@@ -129,6 +132,9 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
     private readonly Dictionary<int, (int File, int Part)> _pictures = [];
 
     public event EventHandler? Changed;
+
+    /// <summary>Items the owner picked for a store's codes before: matched without asking again.</summary>
+    public RememberedPicks? Remembered { get; init; }
 
     public string Source { get; private set; } = "";
     /// <summary>The store or supplier printed on the receipt ("Superstore", "Costco"), as Claude read it.</summary>
@@ -252,6 +258,18 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         var line = await BuildAsync(old.Input with { Upc = upc.ToString(CultureInfo.InvariantCulture) }, ct).ConfigureAwait(false);
         if (old.Rule is not null && line.Item is not null) line = ApplyRule(line, old.Rule);
         lock (_gate) _lines[lineNumber] = line;
+        // The same code further down (scanned again at the till) now matches the pick too.
+        if (Remembered is not null && ReceiptQuestions.SameItemKey(old.Input) is { } key)
+        {
+            List<ReceiptLine> same;
+            lock (_gate) same = _lines.Values.Where(l => l.Number != lineNumber && l.Item is null && l.Status != ReceiptLineStatus.Unreadable
+                                                         && ReceiptQuestions.SameItemKey(l.Input) == key).ToList();
+            foreach (var l in same)
+            {
+                var again = await BuildAsync(l.Input, ct).ConfigureAwait(false);
+                lock (_gate) _lines[l.Number] = again;
+            }
+        }
         Changed?.Invoke(this, EventArgs.Empty);
         return line;
     }
@@ -417,6 +435,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             {
                 Input = input,
                 Status = ReceiptLineStatus.Unreadable,
+                Qty = input.Qty,
                 Warnings = ["Can't read this line. Type it in, or skip it."],
             };
 
@@ -430,6 +449,14 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         {
             item = pickedItem;
             matchedBy = "picked";
+            Remembered?.Remember(Store, input, pickedItem.Upc, pickedItem.Description, DateTime.Now);
+        }
+        // The item the owner picked for this store's code on an earlier receipt (still active in eStream).
+        if (item is null && Remembered?.Find(Store, input) is { } earlier
+            && (await lookup.LookupUpcAsync(earlier.Upc.ToString(CultureInfo.InvariantCulture), ct).ConfigureAwait(false)).Item is { Inactive: false } known)
+        {
+            item = known;
+            matchedBy = $"your earlier pick ({earlier.When.ToString("MMM d", Ca)})";
         }
         // The printed code can be a UPC or the store's Shelf Code (test 3: Costco item numbers are shelf codes, and
         // Costco's 1019 HALF & HALF is also the UPC/PLU of PROPANE). One hit = matched; several = the owner picks.
@@ -442,6 +469,10 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             foreach (var upc in await lookup.Repository.FindByShelfCodeAsync(code, ct).ConfigureAwait(false))
                 if (hits.All(h => h.Item.Upc != upc) && await lookup.Repository.GetByBarcodeAsync(upc, ct).ConfigureAwait(false) is { } bySc)
                     hits.Add((bySc, "shelf code"));
+            // A supplier's own item number for it (VendorItems), when suppliers are set up in eStream.
+            foreach (var upc in await lookup.Repository.FindBySupplierCodeAsync(code, ct).ConfigureAwait(false))
+                if (hits.All(h => h.Item.Upc != upc) && await lookup.Repository.GetByBarcodeAsync(upc, ct).ConfigureAwait(false) is { } bySupplier)
+                    hits.Add((bySupplier, "supplier code"));
             if (hits.Count == 1)
             {
                 item = hits[0].Item;
@@ -449,7 +480,7 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             }
             else if (hits.Count > 1)
             {
-                candidates = hits.Select(h => new ReceiptCandidate(h.Item.Upc, $"{h.Item.Description} ({h.How} {code})", 100)).ToList();
+                candidates = WithFacts(hits.Select(h => (new ReceiptCandidate(h.Item.Upc, $"{h.Item.Description} ({h.How} {code})", 100), (Item?)h.Item)).ToList(), input);
                 codeProblem = $"Code {code} matches {hits.Count} items. Pick one.";
             }
         }
@@ -465,11 +496,21 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             }
         }
 
+        if (item is null && codeProblem is null && candidates.Count > 0)
+        {
+            // Name matches only carry the name: fetch each item so the owner can tell them apart.
+            var full = new List<(ReceiptCandidate, Item?)>();
+            foreach (var c in candidates) full.Add((c, await lookup.Repository.GetByBarcodeAsync(c.Upc, ct).ConfigureAwait(false)));
+            candidates = WithFacts(full, input);
+        }
+
         if (item is null)
             return new ReceiptLine
             {
                 Input = input,
                 Status = candidates.Count > 0 ? ReceiptLineStatus.NeedsChoice : ReceiptLineStatus.NoMatch,
+                Qty = QtyOf(input).Qty,
+                QtyAssumed = QtyOf(input).Assumed,
                 Candidates = candidates,
                 Warnings = [codeProblem ?? (candidates.Count > 0
                     ? "Pick the item."
@@ -499,7 +540,9 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
                 unitCost = Math.Round(cp / units, 4, MidpointRounding.AwayFromZero);
                 caseCost = cp;
                 math = $"{Money(cp)} ÷ ({N(item.PacksPerCase)} × {N(item.UnitsPerPack)}) = {Money4(unitCost.Value)}";
-                if (units == 1)
+                // 1 × 1 is normal for things bought one at a time (Costco, Superstore). When eStream has a cost, a
+                // case bought as "1" shows up as a big cost change instead, so only warn when there's nothing to compare.
+                if (units == 1 && item.UnitCost <= 0)
                     warnings.Add("eStream has 1 pack × 1 unit. If it comes in a case, check how many are in it.");
             }
         }
@@ -536,8 +579,9 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
         {
             if (input.UnitPrice is not null || units == 1) { receivedUnits = qty; receivedMath = $"{N(qty)} unit{(qty == 1 ? "" : "s")}"; }
             else if (units > 1) { receivedUnits = qty * units; receivedMath = $"{N(qty)} × {N(units)} = {N(receivedUnits.Value)} units"; }
-            if (receivedUnits is not null && qtyAssumed)
-                receivedMath += qty == 1 ? " (no count printed, so 1 scanned)" : $" (no count printed; line total ÷ price = {N(qty)})";
+            // One scan with no count is just "1 unit"; a count worked out from the line total says so.
+            if (receivedUnits is not null && qtyAssumed && qty != 1)
+                receivedMath += $" (line total ÷ price = {N(qty)})";
         }
 
         var status = item.Inactive ? ReceiptLineStatus.Inactive
@@ -579,6 +623,44 @@ public sealed class ReceiptSession(ItemLookupService lookup, Func<IReadOnlyColle
             if (whole >= 1 && whole <= 1000 && Math.Abs(whole * each.Value - total) <= 0.02m) return (whole, true);
         }
         return (1, true);
+    }
+
+    /// <summary>Adds each candidate's facts and marks the one whose case cost is closest to the receipt's price.</summary>
+    private static List<ReceiptCandidate> WithFacts(IReadOnlyList<(ReceiptCandidate Candidate, Item? Item)> found, ReceiptLineInput input)
+    {
+        var paid = input.CasePrice ?? input.UnitPrice;
+        decimal? Gap((ReceiptCandidate Candidate, Item? Item) f)
+        {
+            if (paid is not > 0 || f.Item is null) return null;
+            var units = f.Item.PacksPerCase * f.Item.UnitsPerPack;
+            var cost = input.UnitPrice is not null ? f.Item.UnitCost : f.Item.CaseCost;
+            if (input.UnitPrice is null && cost <= 0 && f.Item.UnitCost > 0 && units > 0) cost = f.Item.UnitCost * units;
+            return cost > 0 ? Math.Abs(cost - paid.Value) / paid.Value : null;
+        }
+        var gaps = found.Select(Gap).ToList();
+        var best = gaps.Where(g => g is not null).DefaultIfEmpty(null).Min();
+        var bestCount = gaps.Count(g => g == best);
+        return found.Select((f, i) => f.Candidate with
+        {
+            Facts = f.Item is null ? "" : Facts(f.Item),
+            ClosestPrice = found.Count > 1 && best is <= 0.34m && bestCount == 1 && gaps[i] == best,
+        }).ToList();
+    }
+
+    /// <summary>"case of 12 (1 × 12) · sells $7.49 · case cost $12.49 · on hand 14 · sold 9 in 4 weeks · last received Oct 3, 2026".</summary>
+    internal static string Facts(Item it)
+    {
+        var parts = new List<string>();
+        var units = it.PacksPerCase * it.UnitsPerPack;
+        parts.Add(units <= 0 ? "no case size" : units == 1 ? "sold singly (1 × 1)" : $"case of {N(units)} ({N(it.PacksPerCase)} × {N(it.UnitsPerPack)})");
+        if (it.Price > 0) parts.Add(it.For > 1 ? $"sells {it.For} for {Money(it.Price)}" : $"sells {Money(it.Price)}");
+        if (it.CaseCost > 0) parts.Add($"case cost {Money(it.CaseCost)}");
+        else if (it.UnitCost > 0) parts.Add($"unit cost {Money4(it.UnitCost)}");
+        parts.Add($"on hand {N(it.OnHand)}");
+        if (it.FourWeekSales > 0) parts.Add($"sold {N(it.FourWeekSales)} in 4 weeks");
+        if (it.LastReceived is { } r) parts.Add($"last received {r.ToString("MMM d, yyyy", Ca)}");
+        if (it.Inactive) parts.Add("INACTIVE");
+        return string.Join(" · ", parts);
     }
 
     private static readonly CultureInfo Ca = CultureInfo.GetCultureInfo("en-CA");

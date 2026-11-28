@@ -41,9 +41,22 @@ public sealed class MockItemRepository : IItemRepository
     public async Task<IReadOnlyList<long>> FindByShelfCodeAsync(string shelfCode, CancellationToken ct = default)
     {
         await Task.Delay(Delay, ct).ConfigureAwait(false);
-        var code = shelfCode.Trim();
-        lock (_items) return _items.Values.Where(i => !i.Inactive && i.ShelfCode.Trim().Equals(code, StringComparison.OrdinalIgnoreCase))
+        var code = shelfCode.Trim().TrimStart('0');
+        if (code.Length == 0) return [];
+        lock (_items) return _items.Values.Where(i => !i.Inactive && i.ShelfCode.Trim().TrimStart('0').Equals(code, StringComparison.OrdinalIgnoreCase))
             .Select(i => i.Upc).Take(10).ToList();
+    }
+
+    /// <summary>Supplier item numbers (eStream's VendorItems): code → UPC.</summary>
+    public Dictionary<string, long> SupplierCodes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<IReadOnlyList<long>> FindBySupplierCodeAsync(string code, CancellationToken ct = default)
+    {
+        await Task.Delay(Delay, ct).ConfigureAwait(false);
+        var bare = code.Trim().TrimStart('0');
+        lock (_items) return SupplierCodes.Where(p => p.Key.Trim().TrimStart('0').Equals(bare, StringComparison.OrdinalIgnoreCase)
+                                                    && _items.TryGetValue(p.Value, out var i) && !i.Inactive)
+            .Select(p => p.Value).Distinct().Take(10).ToList();
     }
 
     public async Task<IReadOnlyList<ItemName>> GetAllNamesAsync(CancellationToken ct = default)

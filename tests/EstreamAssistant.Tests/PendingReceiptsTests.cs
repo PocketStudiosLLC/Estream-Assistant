@@ -105,7 +105,8 @@ public class PendingReceiptsTests : IDisposable
         Assert.Equal(1, units[4]);
         Assert.Equal(3, units[5]);
         Assert.Null(units[6]);
-        Assert.Contains("no count printed, so 1 scanned", s.Lines.Single(l => l.Number == 1).ReceivedMath);
+        Assert.Equal("1 unit", s.Lines.Single(l => l.Number == 1).ReceivedMath); // just "qty 1": one scan
+        Assert.Contains("line total ÷ price = 10", s.Lines.Single(l => l.Number == 3).ReceivedMath);
         Assert.True(s.Lines.Single(l => l.Number == 3).QtyAssumed);
         Assert.False(s.Lines.Single(l => l.Number == 5).QtyAssumed);
         Assert.DoesNotContain(s.Lines.Single(l => l.Number == 4).Warnings, w => w.Contains("line total"));
@@ -114,6 +115,102 @@ public class PendingReceiptsTests : IDisposable
         Assert.Equal((6, QuestionKind.Quantity), (q.Line, q.Kind));
         var counts = await s.ToReceivedCountsAsync([1, 2, 3, 4, 5]);
         Assert.Equal(16, counts.Rows.Single().Count - Math.Max(0, counts.Rows.Single().SystemOnHand)); // 1 + 1 + 10 + 1 + 3
+    }
+
+    [Fact]
+    public async Task Look_alike_items_show_what_tells_them_apart()
+    {
+        // Costco 2026-10-27 line 3: code 14094 is the shelf code of two "MOTT'S CLAMATO - ORIGINAL" items.
+        Item Clamato(long upc, decimal packs, decimal units, decimal caseCost, decimal onHand, DateTime? received) => new()
+        {
+            Upc = upc, Description = "MOTT'S CLAMATO - ORIGINAL", ShelfCode = "14094", PacksPerCase = packs, UnitsPerPack = units,
+            CaseCost = caseCost, UnitCost = caseCost / (packs * units), Price = 4.49m, OnHand = onHand, LastReceived = received,
+        };
+        var repo = new MockItemRepository(
+        [
+            Clamato(65912506200, 1, 1, 3.29m, 4, null),
+            Clamato(6591200820, 1, 4, 12.49m, 11, new DateTime(2026, 10, 3)),
+            Single,
+        ]) { Delay = TimeSpan.Zero };
+        var lookup = new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n3.json")));
+        var s = new ReceiptSession(lookup, () => []);
+        await s.SetLinesAsync("Costco", [L(3, "CLAMATO", "14094", 1, 12.99m), L(8, "POPCORN 220G", "5551112223", 1, 31m)]);
+
+        var line = s.Lines.Single(l => l.Number == 3);
+        Assert.Equal(ReceiptLineStatus.NeedsChoice, line.Status);
+        var single = line.Candidates.Single(c => c.Upc == 65912506200);
+        var pack = line.Candidates.Single(c => c.Upc == 6591200820);
+        Assert.Contains("sold singly (1 × 1)", single.Facts);
+        Assert.Contains("case of 4 (1 × 4)", pack.Facts);
+        Assert.Contains("case cost $12.49", pack.Facts);
+        Assert.Contains("on hand 11", pack.Facts);
+        Assert.Contains("last received Oct 3, 2026", pack.Facts);
+        Assert.True(pack.ClosestPrice);   // $12.99 paid: the 4-pack at $12.49, not the single at $3.29
+        Assert.False(single.ClosestPrice);
+
+        // 1 × 1 with a cost in eStream that fits the receipt: nothing to check (the chat used to ask about every one).
+        Assert.Equal(ReceiptLineStatus.Ready, s.Lines.Single(l => l.Number == 8).Status);
+    }
+
+    [Fact]
+    public async Task A_readable_code_is_looked_up_in_estream_before_any_list_of_names()
+    {
+        // Supplier item numbers kept in eStream (VendorItems), and shelf codes stored with leading zeros or spaces,
+        // match the receipt's code directly: no "pick from similar names".
+        var lays = MockItemRepository.SampleItems().First(i => i.Upc == 60410079591);
+        var repo = new MockItemRepository(MockItemRepository.SampleItems().Append(Single with { ShelfCode = " 0014094 " })) { Delay = TimeSpan.Zero };
+        repo.SupplierCodes["161552"] = lays.Upc;
+        var s = new ReceiptSession(new ItemLookupService(repo, new NameCache(Path.Combine(_dir.Path, "n4.json"))), () => []);
+        await s.SetLinesAsync("Costco", [L(1, "KS QUE PASA", "161552", 1, 55.20m), L(3, "CLAMATO", "14094", 1, 30m)]);
+
+        var one = s.Lines.Single(l => l.Number == 1);
+        Assert.Equal((lays.Upc, "supplier code"), (one.Item!.Upc, one.MatchedBy));
+        var three = s.Lines.Single(l => l.Number == 3);
+        Assert.Equal((Single.Upc, "shelf code"), (three.Item!.Upc, three.MatchedBy));
+        Assert.Empty(ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets));
+    }
+
+    [Fact]
+    public async Task A_pick_is_remembered_for_that_stores_next_receipt()
+    {
+        var file = Path.Combine(_dir.Path, "picks.json");
+        var lookup = new ItemLookupService(new MockItemRepository(MockItemRepository.SampleItems().Append(Single)) { Delay = TimeSpan.Zero },
+            new NameCache(Path.Combine(_dir.Path, "n5.json")));
+        var first = new ReceiptSession(lookup, () => []) { Remembered = new RememberedPicks(file) };
+        first.SetInfo("Costco", null);
+        await first.SetLinesAsync("Costco", [L(4, "PITA BITES", "242470", 1, 30m), L(9, "PITA BITES", "0242470", 1, 30m)]);
+        Assert.All(first.Lines, l => Assert.Null(l.Item));
+
+        await first.ChooseAsync(4, Single.Upc);
+        // The same code further down this receipt matches straight away.
+        Assert.Equal(Single.Upc, first.Lines.Single(l => l.Number == 9).Item?.Upc);
+        Assert.StartsWith("your earlier pick", first.Lines.Single(l => l.Number == 9).MatchedBy);
+
+        // Next Costco receipt (the app restarted): no question for that code.
+        var next = new ReceiptSession(lookup, () => []) { Remembered = new RememberedPicks(file) };
+        next.SetInfo("COSTCO", null);
+        await next.SetLinesAsync("Costco", [L(2, "PITA BITES", "242470", 1, 30m)]);
+        var line = Assert.Single(next.Lines);
+        Assert.Equal((Single.Upc, ReceiptLineStatus.Ready), (line.Item!.Upc, line.Status));
+        Assert.Empty(ReceiptQuestions.For(next.Lines, next.LinesOnStockSheets));
+
+        // Another store's 242470 is something else: not matched by Costco's pick.
+        var other = new ReceiptSession(lookup, () => []) { Remembered = new RememberedPicks(file) };
+        other.SetInfo("Superstore", null);
+        await other.SetLinesAsync("Superstore", [L(1, "PITA BITES", "242470", 1, 30m)]);
+        Assert.Null(Assert.Single(other.Lines).Item);
+
+        // Picking a different item for the code replaces the pick.
+        await next.ChooseAsync(2, 60410079591);
+        Assert.Equal(60410079591, new RememberedPicks(file).Find("Costco", L(1, "x", "242470"))!.Upc);
+    }
+
+    [Fact]
+    public void The_code_lookups_are_read_only()
+    {
+        EstreamAssistant.Core.Data.SqlItemRepository.EnsureReadOnlySelect(EstreamAssistant.Core.Data.SqlItemRepository.ByShelfCodeSql);
+        EstreamAssistant.Core.Data.SqlItemRepository.EnsureReadOnlySelect(EstreamAssistant.Core.Data.SqlItemRepository.BySupplierCodeSql);
+        Assert.Contains("VendorItems", EstreamAssistant.Core.Data.SqlItemRepository.BySupplierCodeSql);
     }
 
     [Fact]
@@ -133,6 +230,14 @@ public class PendingReceiptsTests : IDisposable
         Assert.Equal([2, 5, 7], q.Lines);
         Assert.Equal("Scan the barcode for rows 2, 5 and 7 on the receipt (the same item, 3 times): 'QWZX WIDGET 220G'", q.Text);
         Assert.True(q.Covers(7) && !q.Covers(3));
+
+        // The card on the Pending tab counts it the same way: one thing to do, not three.
+        var store = new SavedReceipts(Path.Combine(_dir.Path, "saved3"));
+        Assert.Equal(1, store.SaveForLater("Superstore", s.Lines, s.LinesOnStockSheets, [], s.PictureOf, DateTime.Now).NeedsOwner);
+        // A row with no item yet still shows the count read off the receipt.
+        await s.SetLinesAsync("", [L(9, "ORG BANANAS", "2619", null, 2.59m) with { LineTotal = 25.90m }]);
+        Assert.Equal((10m, true), (s.Lines.Single(l => l.Number == 9).Qty!.Value, s.Lines.Single(l => l.Number == 9).QtyAssumed));
+        await s.UpdateLineAsync(9, i => i with { Skipped = true });
 
         foreach (var n in q.Lines) await s.UpdateLineAsync(n, i => i with { Upc = "060410079591" });
         Assert.Empty(ReceiptQuestions.For(s.Lines, s.LinesOnStockSheets));

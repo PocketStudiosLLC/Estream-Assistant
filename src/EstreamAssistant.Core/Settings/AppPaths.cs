@@ -20,6 +20,8 @@ public sealed class AppPaths
     public string RunsFolder => Path.Combine(Root, "runs");
     /// <summary>Receipts saved for later (the Pending tab), and the lines of finished ones.</summary>
     public string SavedReceiptsFolder => Path.Combine(Root, "receipts");
+    /// <summary>Items the owner picked for receipt codes (by store), so the next receipt matches them.</summary>
+    public string RememberedPicksFile => Path.Combine(Root, "receipt-picks.json");
 
     /// <summary>One cache file per data source so mock and real names never mix.</summary>
     public string NameCacheFile(DataSourceKind source) =>

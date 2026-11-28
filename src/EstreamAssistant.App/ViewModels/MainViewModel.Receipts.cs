@@ -325,7 +325,7 @@ public sealed partial class MainViewModel
         _chat.DropReceiptPictures(files);
         var todo = saved.NeedsOwner;
         Add(FeedKind.App, $"Saved for later: {saved.Title}. It's on the Pending tab" +
-            (todo > 0 ? $", where the app takes you through the {todo} row{(todo == 1 ? "" : "s")} that need you." : ".") +
+            (todo > 0 ? $", where the app takes you through what's left ({todo} to do)." : ".") +
             " Its pictures leave the chat with your next message (saves tokens).");
         _chat.AddContextNote($"[receipt saved for later by the owner] {saved.Title} ({saved.Lines.Count} lines, {todo} need the owner) is on the Pending tab. " +
                              "The receipt table is closed and its pictures are out of the chat; search_receipts has its lines.");

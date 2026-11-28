@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using EstreamAssistant.Core.Models;
 using Microsoft.Data.SqlClient;
@@ -285,17 +286,44 @@ public sealed partial class SqlItemRepository : IItemRepository
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ForbiddenKeyword();
 
-    internal const string ByShelfCodeSql =
-        "SELECT TOP (10) CAST(BarCode AS decimal(18,0)) UPC FROM Inventory WHERE VendorCode = @code AND ISNULL(Inactive,0) = 0";
+    // A code compared without spaces or leading zeros: "014094 " and "14094" are the same shelf code.
+    private const string Bare = "SUBSTRING(LTRIM(RTRIM({0})), PATINDEX('%[^0]%', LTRIM(RTRIM({0})) + '.'), 50)";
 
-    public async Task<IReadOnlyList<long>> FindByShelfCodeAsync(string shelfCode, CancellationToken ct = default)
+    internal static readonly string ByShelfCodeSql =
+        "SELECT TOP (10) CAST(BarCode AS decimal(18,0)) UPC FROM Inventory WHERE ISNULL(Inactive,0) = 0 " +
+        $"AND (VendorCode = @code OR {string.Format(CultureInfo.InvariantCulture, Bare, "VendorCode")} = @bare)";
+
+    internal static readonly string BySupplierCodeSql =
+        "SELECT DISTINCT TOP (10) CAST(v.ItemBarcode AS decimal(18,0)) UPC FROM VendorItems v JOIN Inventory i ON i.BarCode = v.ItemBarcode " +
+        "WHERE ISNULL(i.Inactive,0) = 0 AND v.ItemBarcode > 0 " +
+        $"AND ({string.Format(CultureInfo.InvariantCulture, Bare, "v.ItemVendorCode")} = @bare OR {string.Format(CultureInfo.InvariantCulture, Bare, "v.ShelfCode")} = @bare)";
+
+    public Task<IReadOnlyList<long>> FindByShelfCodeAsync(string shelfCode, CancellationToken ct = default) =>
+        FindByCodeAsync(ByShelfCodeSql, shelfCode, ct);
+
+    public async Task<IReadOnlyList<long>> FindBySupplierCodeAsync(string code, CancellationToken ct = default)
     {
-        var code = shelfCode.Trim();
+        // VendorItems is only filled when suppliers are set up in eStream; a store without it just gets no matches.
+        try { return await FindByCodeAsync(BySupplierCodeSql, code, ct).ConfigureAwait(false); }
+        catch (SqlException ex)
+        {
+            Log?.Invoke($"Supplier code lookup skipped: {ex.Message}");
+            return [];
+        }
+    }
+
+    private async Task<IReadOnlyList<long>> FindByCodeAsync(string sql, string raw, CancellationToken ct)
+    {
+        var code = raw.Trim();
+        var bare = code.TrimStart('0');
         var upcs = new List<long>();
-        if (code.Length == 0 || code.Length > 20) return upcs;
-        await QueryAsync(ByShelfCodeSql, cmd => cmd.Parameters.Add(new SqlParameter("@code", SqlDbType.VarChar, 20) { Value = code }),
-            r => upcs.Add((long)Dec(r, "UPC")), ct).ConfigureAwait(false);
-        return upcs;
+        if (bare.Length == 0 || code.Length > 20) return upcs;
+        await QueryAsync(sql, cmd =>
+        {
+            cmd.Parameters.Add(new SqlParameter("@code", SqlDbType.NVarChar, 20) { Value = code });
+            cmd.Parameters.Add(new SqlParameter("@bare", SqlDbType.NVarChar, 20) { Value = bare });
+        }, r => upcs.Add((long)Dec(r, "UPC")), ct).ConfigureAwait(false);
+        return upcs.Distinct().ToList();
     }
 
     public async Task<Item?> GetByBarcodeAsync(long upc, CancellationToken ct = default)
