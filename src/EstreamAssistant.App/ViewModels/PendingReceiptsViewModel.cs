@@ -36,15 +36,15 @@ public sealed partial class SavedReceiptCardViewModel(SavedReceipt record) : Obs
 }
 
 /// <summary>A row of the saved receipt highlighted on its picture: the band from Top to Bottom percent.</summary>
-public sealed partial class HighlightViewModel(int line, int top, int bottom, string tip) : ObservableObject
+public sealed partial class HighlightViewModel(int line, double top, double bottom, string tip, bool exact = false) : ObservableObject
 {
-    // A little extra above and below: the position is Claude's estimate.
-    private const double Pad = 0.8;
+    // A little extra above and below: Claude's place is an estimate; the text reader's is exact, so just a sliver.
+    private static double Pad(bool exact, double top, double bottom) => exact ? (bottom - top) * 0.15 : 0.8;
     public int Line { get; } = line;
     public string Tip { get; } = tip;
-    public GridLength Above { get; } = new(Math.Max(0, top - Pad), GridUnitType.Star);
-    public GridLength Band { get; } = new(Math.Max(0.5, bottom - top + 2 * Pad), GridUnitType.Star);
-    public GridLength Below { get; } = new(Math.Max(0, 100 - bottom - Pad), GridUnitType.Star);
+    public GridLength Above { get; } = new(Math.Max(0, top - Pad(exact, top, bottom)), GridUnitType.Star);
+    public GridLength Band { get; } = new(Math.Max(0.3, bottom - top + 2 * Pad(exact, top, bottom)), GridUnitType.Star);
+    public GridLength Below { get; } = new(Math.Max(0, 100 - bottom - Pad(exact, top, bottom)), GridUnitType.Star);
     [ObservableProperty] private bool _isCurrent;
 }
 
@@ -109,6 +109,11 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
     private readonly Func<IReadOnlyCollection<int>> _priceEndings;
     private ReceiptSession? _session;
     private SavedReceipt? _open;
+    /// <summary>Rows found on the pictures by Windows' text reader, for rows Claude didn't place (row number → place).</summary>
+    private IReadOnlyDictionary<int, LinePlace> _located = new Dictionary<int, LinePlace>();
+
+    /// <summary>Reads the text lines on the receipt pictures (Windows' text reader; replaced in tests and demos).</summary>
+    public Func<IReadOnlyList<ImageSource?>, Task<IReadOnlyList<OcrLine>>>? ReadText { get; init; }
     private IReadOnlyList<ReceiptQuestion> _questions = [];
     private int _currentLine;
 
@@ -318,6 +323,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         // No pictures were saved (a PDF sent to Claude as it is): draw the PDF's pages in the receipt box instead.
         var pdf = Pictures.Count == 0 ? record.Files.FirstOrDefault(f => f.StoredAs.Length > 0 && f.MediaType == ReceiptIngest.PdfType) : null;
         _drawingPdf = pdf is not null;
+        _located = new Dictionary<int, LinePlace>();
         _currentLine = 0;
         RefreshOpen(advanceFrom: 0);
         OnPropertyChanged(nameof(HasOpen));
@@ -329,6 +335,29 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         FinishCommand.NotifyCanExecuteChanged();
         DeleteCommand.NotifyCanExecuteChanged();
         if (pdf is not null && _saved.OriginalPath(record, pdf) is { } path) await ShowPdfAsync(record, path);
+        else await LocateRowsAsync(record);
+    }
+
+    /// <summary>
+    /// Rows Claude didn't say the place of (a receipt sent as a PDF): found on the pictures with Windows' text reader
+    /// so the row being asked about is still highlighted. Nothing is sent to Claude.
+    /// </summary>
+    private async Task LocateRowsAsync(SavedReceipt record)
+    {
+        if (ReadText is null || Pictures.Count == 0 || _session is null) return;
+        var missing = _session.Lines.Where(l => !l.Input.HasPosition && !l.Input.Skipped).Select(l => l.Input).ToList();
+        if (missing.Count == 0) return;
+        IReadOnlyList<OcrLine> text;
+        try { text = await ReadText(Pictures.Select(p => p.Image).ToList()); }
+        catch (Exception ex)
+        {
+            _log.Error("Finding receipt rows on the picture failed", ex);
+            return;
+        }
+        if (_open?.Id != record.Id || text.Count == 0) return;
+        _located = ReceiptLocator.Locate(missing, text);
+        _log.Info($"Found {_located.Count} of {missing.Count} rows of {record.Title} on its picture with Windows' text reader.");
+        RefreshOpen();
     }
 
     private async Task ShowPdfAsync(SavedReceipt record, string path)
@@ -343,6 +372,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         OnPropertyChanged(nameof(NoPictures));
         OnPropertyChanged(nameof(DrawingPdf));
         RefreshOpen();
+        await LocateRowsAsync(record);
     }
 
     private void Close()
@@ -350,6 +380,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         _session = null;
         _open = null;
         _drawingPdf = false;
+        _located = new Dictionary<int, LinePlace>();
         _questions = [];
         Question = null;
         Pictures.Clear();
@@ -388,9 +419,12 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         foreach (var l in lines)
         {
             var q = _questions.FirstOrDefault(x => x.Covers(l.Number));
-            if ((q is null && l.Number != _currentLine) || !l.Input.HasPosition || l.Input.Picture > Pictures.Count) continue;
-            Pictures[l.Input.Picture - 1].Highlights.Add(new HighlightViewModel(l.Number, l.Input.Top, l.Input.Bottom,
-                q?.Text ?? $"Row {l.Number}") { IsCurrent = l.Number == _currentLine });
+            bool exact = !l.Input.HasPosition;
+            LinePlace? place = l.Input.HasPosition ? new LinePlace(l.Input.Picture, l.Input.Top, l.Input.Bottom)
+                : _located.TryGetValue(l.Number, out var found) ? found : null;
+            if ((q is null && l.Number != _currentLine) || place is not { } at || at.Picture > Pictures.Count) continue;
+            Pictures[at.Picture - 1].Highlights.Add(new HighlightViewModel(l.Number, at.Top, at.Bottom,
+                q?.Text ?? $"Row {l.Number}", exact) { IsCurrent = l.Number == _currentLine });
         }
 
         OpenTitle = _open.Title;
@@ -407,10 +441,10 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         }.Where(s => s.Length > 0));
 
         var isDone = _counts is not null && _session.IsDoneWith(_counts.Sheets);
-        DoneText = isDone ? "Done: every row is on a posted stock sheet (or left out). Press Finish to file the receipt in Receipts\\Done."
+        DoneText = isDone ? "All done: every row is on a posted stock sheet (or left out). Press Done to file the receipt in Receipts\\Done."
             : _questions.Count == 0 && ready > 0 ? $"Nothing left to ask. Make the stock sheet for the {ready} ready row{(ready == 1 ? "" : "s")}."
-            : _questions.Count == 0 && onSheet.Count > 0 ? "The stock sheet is made. Post it on the Stock counts tab (the stock changes then), then press Finish here."
-            : _questions.Count == 0 ? "Nothing left to ask, and no row can go on a stock sheet. Press Finish to file the receipt."
+            : _questions.Count == 0 && onSheet.Count > 0 ? "The stock sheet is made. Post it on the Stock counts tab (the stock changes then), then press Done here."
+            : _questions.Count == 0 ? "Nothing left to ask, and no row can go on a stock sheet. Press Done to file the receipt."
             : "";
 
         BarcodeText = "";
@@ -615,13 +649,13 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         var warning = done ? "" :
             (notOnSheet > 0 ? $"\n\n{notOnSheet} row{(notOnSheet == 1 ? " isn't" : "s aren't")} on a stock sheet, so that stock won't be added." : "") +
             (sheetsToPost.Count > 0 ? $"\n\nStock sheet {string.Join(", ", sheetsToPost)} isn't posted yet: post it on the Stock counts tab." : "");
-        if (!Confirm("Finish receipt", $"Take {_open.Title} off the Pending tab and file it in Receipts\\Done?{warning}"))
+        if (!Confirm("Receipt done", $"Take {_open.Title} off the Pending tab and file it in Receipts\\Done?{warning}"))
             return;
         try
         {
             var filed = _saved.Finish(_open.Id, _folder, DateTime.Now);
             Selected = null;
-            Status = filed.Count > 0 ? $"Filed in Receipts\\Done: {string.Join(", ", filed)}." : "Finished.";
+            Status = filed.Count > 0 ? $"Filed in Receipts\\Done: {string.Join(", ", filed)}." : "Done.";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -676,7 +710,7 @@ public sealed partial class PendingReceiptsViewModel : ObservableObject
         catch (Exception ex) { Status = "Couldn't open the file: " + ex.Message; }
     }
 
-    [RelayCommand] private void ZoomIn() => Zoom = Math.Min(4, Zoom + 0.5);
+    [RelayCommand] private void ZoomIn() => Zoom = Math.Min(5, Zoom + 0.5);
     [RelayCommand] private void ZoomOut() => Zoom = Math.Max(1, Zoom - 0.5);
 
     private ImageSource? Load(string path)

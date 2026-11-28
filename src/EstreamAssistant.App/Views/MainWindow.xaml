@@ -689,7 +689,7 @@
                                     <Button Content="Rename" Command="{Binding StartRenameCommand}" Padding="10,2" MinHeight="26" FontSize="13" Margin="6,0,0,0"
                                             Visibility="{Binding IsRenaming, Converter={StaticResource Hidden}}"
                                             ToolTip="Give this receipt your own name (it's also put on the stock sheet in eStream)" />
-                                    <Button Content="Finish" Command="{Binding FinishCommand}" Padding="10,2" MinHeight="26" FontSize="13" Margin="6,0,0,0"
+                                    <Button Content="Done" Command="{Binding FinishCommand}" Padding="10,2" MinHeight="26" FontSize="13" Margin="6,0,0,0"
                                             ToolTip="Take the receipt off this tab and file it in Receipts\Done" />
                                     <Button Content="Delete" Command="{Binding DeleteCommand}" Padding="10,2" MinHeight="26" FontSize="13" Margin="6,0,0,0"
                                             ToolTip="Delete this receipt from the Pending tab (its file goes to Receipts\Done)" />
@@ -714,8 +714,8 @@
                                 <StackPanel>
                                     <DockPanel>
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                            <Button Content="◀ Back" Command="{Binding PreviousCommand}" Padding="8,1" MinHeight="24" FontSize="12" ToolTip="The question before" />
-                                            <Button Content="Later ▶" Command="{Binding NextCommand}" Padding="8,1" MinHeight="24" FontSize="12" Margin="6,0,0,0"
+                                            <Button Content="◀ Back" Command="{Binding PreviousCommand}" Padding="8,1" Height="26" MinWidth="76" FontSize="12" VerticalAlignment="Center" ToolTip="The question before" />
+                                            <Button Content="Later ▶" Command="{Binding NextCommand}" Padding="8,1" Height="26" MinWidth="76" FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0"
                                                     ToolTip="Skip this one for now: it stays on the list" />
                                         </StackPanel>
                                         <TextBlock Text="{Binding StepText}" FontSize="12" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />

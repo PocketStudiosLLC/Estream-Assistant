@@ -73,6 +73,7 @@ public partial class MainWindow : Window
                 box.SelectAll();
             });
         }
+        if (vm.PendingReceipts is { } zooming) HookReceiptZoom(zooming);
         if (vm.PendingReceipts is { } renaming)
             renaming.PropertyChanged += (_, e) =>
             {
@@ -393,4 +394,83 @@ public partial class MainWindow : Window
         if (_vm.RefreshCacheCommand.CanExecute(null))
             await _vm.RefreshCacheCommand.ExecuteAsync(null);
     }
+
+    // ---- Pending tab receipt picture: wheel zooms at the mouse, double-click zooms in/out, drag moves it ----
+
+    private const double MinZoom = 1.0, MaxZoom = 5.0;
+    private Point? _dragFrom;
+    private Point _dragOffset;
+
+    private void HookReceiptZoom(PendingReceiptsViewModel pending)
+    {
+        var scroll = PendingPictureScroll;
+        scroll.PreviewMouseWheel += (_, e) =>
+        {
+            e.Handled = true;
+            ZoomReceiptAt(pending, pending.Zoom * (e.Delta > 0 ? 1.2 : 1 / 1.2), e.GetPosition(scroll));
+        };
+        scroll.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (e.OriginalSource is DependencyObject d && FindParent<ScrollBar>(d) is not null) return; // the scroll bars work as usual
+            if (e.ClickCount == 2)
+            {
+                ZoomReceiptAt(pending, pending.Zoom < 1.9 ? 2.5 : MinZoom, e.GetPosition(scroll));
+                e.Handled = true;
+                return;
+            }
+            if (scroll.ScrollableHeight <= 0 && scroll.ScrollableWidth <= 0) return;
+            _dragFrom = e.GetPosition(scroll);
+            _dragOffset = new Point(scroll.HorizontalOffset, scroll.VerticalOffset);
+            scroll.CaptureMouse();
+            scroll.Cursor = Cursors.SizeAll;
+            e.Handled = true;
+        };
+        scroll.PreviewMouseMove += (_, e) =>
+        {
+            if (_dragFrom is not { } from) return;
+            var now = e.GetPosition(scroll);
+            scroll.ScrollToHorizontalOffset(_dragOffset.X - (now.X - from.X));
+            scroll.ScrollToVerticalOffset(_dragOffset.Y - (now.Y - from.Y));
+        };
+        void EndDrag()
+        {
+            if (_dragFrom is null) return;
+            _dragFrom = null;
+            scroll.ReleaseMouseCapture();
+            scroll.Cursor = null;
+        }
+        scroll.PreviewMouseLeftButtonUp += (_, _) => EndDrag();
+        scroll.LostMouseCapture += (_, _) => EndDrag();
+    }
+
+    /// <summary>Dev testing: the same as turning the mouse wheel over the receipt picture.</summary>
+    internal void DemoWheelZoom(Point at, int notches)
+    {
+        if (_vm.PendingReceipts is not { } pending) return;
+        for (int i = 0; i < Math.Abs(notches); i++) ZoomReceiptAt(pending, pending.Zoom * (notches > 0 ? 1.2 : 1 / 1.2), at);
+    }
+
+    /// <summary>Zooms the receipt picture keeping the spot under the mouse where it is.</summary>
+    private void ZoomReceiptAt(PendingReceiptsViewModel pending, double zoom, Point mouse)
+    {
+        var scroll = PendingPictureScroll;
+        zoom = Math.Clamp(zoom, MinZoom, MaxZoom);
+        var old = pending.Zoom;
+        if (Math.Abs(zoom - old) < 0.001) return;
+        var x = scroll.HorizontalOffset + mouse.X;
+        var y = scroll.VerticalOffset + mouse.Y;
+        pending.Zoom = Math.Abs(zoom - 1) < 0.05 ? 1 : zoom;
+        scroll.UpdateLayout();
+        var k = pending.Zoom / old;
+        scroll.ScrollToHorizontalOffset(x * k - mouse.X);
+        scroll.ScrollToVerticalOffset(y * k - mouse.Y);
+        scroll.UpdateLayout(); // so a quick run of wheel turns each starts from where the last one left it
+    }
+
+    private static T? FindParent<T>(DependencyObject? d) where T : DependencyObject
+    {
+        while (d is not null && d is not T) d = d is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D ? System.Windows.Media.VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+        return d as T;
+    }
+
 }

@@ -475,3 +475,81 @@ public class PendingReceiptsTests : IDisposable
     private static Dictionary<string, JsonElement> In(object o) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(o))!;
 }
+
+public class ReceiptLocatorTests
+{
+    private static ReceiptLineInput Row(int n, string text, string? code, decimal? total) => new() { Line = n, Text = text, Code = code, LineTotal = total };
+
+    [Fact]
+    public void Rows_are_found_on_the_picture_in_order_even_when_scanned_twice_or_misread()
+    {
+        // What a text reader gives for a till receipt: fees and savings lines between rows, OCR slips ("0G", "4.9").
+        var ocr = new List<OcrLine>
+        {
+            new(1, "COSTCO", 1, 3),
+            new(1, "161552 KS QUE PASA 6.99 G", 8.1, 8.6),
+            new(1, "161552 KS QUE PASA 6.99 G", 8.7, 9.2),
+            new(1, "14094 CLAMATO 12.99", 9.3, 9.8),
+            new(1, "ENVIRO FEE C 0.28", 9.8, 10.3),
+            new(1, "242470 PITA BITES 899", 10.8, 11.4),
+            new(1, "0000397895 / 242470 2.00-", 11.4, 12.0),
+            new(1, "4788 LAC FREE 2% 4.9", 32.8, 33.3),
+            new(1, "DEPOSIT CL 0.10", 33.9, 34.4),
+            new(1, "4788 LAC FREE 2% 4.97", 34.5, 35.0),
+            new(2, "2004907 TROPICANA 0G 13.39", 5, 6),
+        };
+        var found = ReceiptLocator.Locate(
+        [
+            Row(1, "KS QUE PASA", "161552", 6.99m), Row(2, "KS QUE PASA", "161552", 6.99m), Row(3, "CLAMATO", "14094", 12.99m),
+            Row(4, "PITA BITES", "242470", 8.99m), Row(5, "LAC FREE 2%", "4788", 4.97m), Row(6, "LAC FREE 2%", "4788", 4.97m),
+            Row(7, "TROPICANA OG", "2004907", 13.39m), Row(8, "NOT ON THE PICTURE", "999999", 1m),
+        ], ocr);
+
+        Assert.Equal(8.1, found[1].Top);
+        Assert.Equal(8.7, found[2].Top);   // the second scan, not the first again
+        Assert.Equal(9.3, found[3].Top);
+        Assert.Equal(10.8, found[4].Top);  // the item line, not the instant savings line with its number
+        Assert.Equal(32.8, found[5].Top);  // a misread price doesn't push the first one to the second line
+        Assert.Equal(34.5, found[6].Top);
+        Assert.Equal(new LinePlace(2, 5, 6), found[7]);
+        Assert.False(found.ContainsKey(8));
+    }
+}
+
+public class HelpSearchTests
+{
+    private sealed record Box(string Title, string Text);
+
+    private static readonly Box[] Boxes =
+    [
+        new("Stock counts", "Tell Claude what you counted to see over/short against eStream. Make an eStream stock sheet from it."),
+        new("eStream stock sheets", "See the stock sheets in eStream and what's over or short before you post it."),
+        new("Stock counts tab", "For counting what's on the shelf. Scan an item, type how many you counted."),
+        new("Change prices and costs", "Ask for new prices, 2 for deals, case costs, deposits or eco fees."),
+        new("What's a stock sheet?", "eStream's list of how many of each item you have."),
+        new("Receipts and invoices", "Drop, paste or add a photo or PDF of a supplier receipt."),
+    ];
+
+    private static List<string> Find(string q) =>
+        EstreamAssistant.Core.Help.HelpSearch.Find(Boxes, q, b => b.Title, b => b.Text).Select(b => b.Title).ToList();
+
+    [Fact]
+    public void Finds_boxes_by_words_typos_and_the_stores_own_words()
+    {
+        var sheet = Find("Stock sheet");
+        Assert.Contains("eStream stock sheets", sheet.Take(2));
+        Assert.Contains("What's a stock sheet?", sheet.Take(2));
+        Assert.DoesNotContain("Change prices and costs", sheet);
+
+        // A typo and another word for stock: still the counting boxes.
+        var counts = Find("check iventory counts");
+        Assert.Contains("Stock counts", counts.Take(2));
+        Assert.Contains("Stock counts tab", counts.Take(2));
+        Assert.DoesNotContain("Receipts and invoices", counts);
+
+        Assert.Equal(["Receipts and invoices"], Find("invoice"));
+        Assert.Contains("Change prices and costs", Find("how do I change a price"));
+        Assert.Empty(Find("the"));
+        Assert.Empty(Find("zebra"));
+    }
+}

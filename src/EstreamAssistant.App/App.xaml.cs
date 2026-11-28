@@ -128,6 +128,7 @@ public partial class App : Application
             PendingReceipts = new PendingReceiptsViewModel(savedReceipts, lookup, counts, receiptFolder, _log, () => settings.PriceEndings)
             {
                 Remembered = remembered,
+                ReadText = DemoOcr() ?? (pictures => ReceiptOcr.ReadAsync(pictures, (m, ex) => _log.Error(m, ex))),
             },
         };
         mainVm.UseReceipts(receipt, new ReceiptIngest(new WpfImageShrinker()), receiptFolder, counts, savedReceipts);
@@ -269,11 +270,21 @@ public partial class App : Application
                     var lineVm = vm.ReceiptLines.FirstOrDefault(l => l.Number == int.Parse(value));
                     if (lineVm?.Candidates.FirstOrDefault() is { } cand) await vm.ChooseReceiptCandidateCommand.ExecuteAsync(cand);
                     break;
+                case "--help":
+                    // --help "stock sheet"  (opens the ? window, searching for that; "" for none; the next --snap shows it)
+                    var help = new HelpWindow(_ => { }) { Owner = window };
+                    help.Show();
+                    if (value == "#tabs") help.HelpTabs.SelectedIndex = 1; // the "The tabs" tab
+                    else help.SearchBox.Text = value;
+                    _snapWindow = help;
+                    break;
                 case "--snap":
                     // --snap C:\path\shot.png  (the window as a picture, wherever it is on screen)
                     await Task.Delay(800);
-                    window.UpdateLayout();
-                    var root = (System.Windows.FrameworkElement)window.Content;
+                    var shot = _snapWindow ?? window;
+                    _snapWindow = null;
+                    shot.UpdateLayout();
+                    var root = (System.Windows.FrameworkElement)shot.Content;
                     var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap((int)root.ActualWidth, (int)root.ActualHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
                     rtb.Render(root);
                     var png = new System.Windows.Media.Imaging.PngBitmapEncoder();
@@ -296,6 +307,11 @@ public partial class App : Application
                     i--; // full-screen window, as on the store PC
                     MainWindow!.WindowState = WindowState.Maximized;
                     await Task.Delay(500);
+                    break;
+                case "--pending-zoom" when window is MainWindow main:
+                    // --pending-zoom 300,200,3  (3 wheel notches in at that spot of the receipt box; negative zooms out)
+                    var z = value.Split(',').Select(double.Parse).ToArray();
+                    main.DemoWheelZoom(new System.Windows.Point(z[0], z[1]), (int)z[2]);
                     break;
                 case "--pending-rename":
                     i--; // presses Rename on the open Pending receipt
@@ -349,6 +365,21 @@ public partial class App : Application
         return i >= 0 && i + 1 < args.Length
             ? args[i + 1].Split(',').Select(long.Parse).ToHashSet()
             : [];
+    }
+
+    /// <summary>
+    /// Dev testing where Windows' text reader isn't there (Wine): ESA_DEMO_OCR = a JSON file of [top %, bottom %, text]
+    /// lines on picture 1, used in its place.
+    /// </summary>
+    /// <summary>Dev testing: the window the next --snap pictures instead of the main one.</summary>
+    private Window? _snapWindow;
+
+    private static Func<IReadOnlyList<System.Windows.Media.ImageSource?>, Task<IReadOnlyList<EstreamAssistant.Core.Receipts.OcrLine>>>? DemoOcr()
+    {
+        if (Environment.GetEnvironmentVariable("ESA_DEMO_OCR") is not { Length: > 0 } file || !File.Exists(file)) return null;
+        var lines = System.Text.Json.JsonSerializer.Deserialize<List<System.Text.Json.JsonElement>>(File.ReadAllText(file))!
+            .Select(e => new EstreamAssistant.Core.Receipts.OcrLine(1, e[2].GetString() ?? "", e[0].GetDouble(), e[1].GetDouble())).ToList();
+        return _ => Task.FromResult<IReadOnlyList<EstreamAssistant.Core.Receipts.OcrLine>>(lines);
     }
 
     private IItemRepository CreateRepository(AppSettings settings)
